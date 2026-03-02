@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
+import pickle
+import os
 import time
+from sklearn.linear_model import LogisticRegression
 
 st.set_page_config(page_title="UFC Fight Predictor", page_icon="🥊", layout="centered")
 
@@ -35,7 +37,9 @@ st.markdown("""
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv("../data/cleaned_ufc_data.csv")
+    base_dir = os.path.dirname(__file__)
+    data_path = os.path.join(base_dir, "..", "data", "cleaned_ufc_data.csv")
+    df = pd.read_csv(data_path)
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     
     # Feature Engineering fürs Training
@@ -43,14 +47,27 @@ def load_data():
     target = 'target'
     df_model = df.dropna(subset=features + [target])
     
-    X = df_model[features]
-    y = df_model[target]
+    baseline_model = None
+    advanced_model = None
     
-    # Model Setup
-    model = LogisticRegression()
-    model.fit(X, y)
+    baseline_model_path = os.path.join(base_dir, "..", "data", "baseline_model.pkl")
+    if os.path.exists(baseline_model_path):
+        with open(baseline_model_path, "rb") as f:
+            baseline_model = pickle.load(f)
+            
+    advanced_model_path = os.path.join(base_dir, "..", "data", "advanced_model.pkl")
+    if os.path.exists(advanced_model_path):
+        with open(advanced_model_path, "rb") as f:
+            advanced_model = pickle.load(f)
+            
+    # Model Setup Fallback
+    if not baseline_model:
+        X = df_model[features]
+        y = df_model[target]
+        baseline_model = LogisticRegression(max_iter=1000)
+        baseline_model.fit(X, y)
     
-    return df, model, df_model
+    return df, baseline_model, advanced_model, df_model
 
 @st.cache_data
 def get_fighters_list(df):
@@ -75,24 +92,52 @@ def get_latest_stats(df, fighter_name):
         stats['wins'] = last_fight['R_wins']
         stats['streak'] = last_fight['R_current_win_streak']
         stats['form'] = last_fight['R_recent_form']
+        stats['height'] = last_fight['R_Height_cms']
+        stats['reach'] = last_fight['R_Reach_cms']
+        stats['avg_SIG_STR_landed'] = last_fight['R_avg_SIG_STR_landed']
+        stats['avg_TD_landed'] = last_fight['R_avg_TD_landed']
+        stats['avg_SUB_ATT'] = last_fight['R_avg_SUB_ATT']
+        stats['avg_KD'] = last_fight['R_avg_KD']
+        stats['avg_CTRL_time'] = last_fight['R_avg_CTRL_time(seconds)']
     else:
         stats['age'] = last_fight['B_age']
         stats['wins'] = last_fight['B_wins']
         stats['streak'] = last_fight['B_current_win_streak']
         stats['form'] = last_fight['B_recent_form']
+        stats['height'] = last_fight['B_Height_cms']
+        stats['reach'] = last_fight['B_Reach_cms']
+        stats['avg_SIG_STR_landed'] = last_fight['B_avg_SIG_STR_landed']
+        stats['avg_TD_landed'] = last_fight['B_avg_TD_landed']
+        stats['avg_SUB_ATT'] = last_fight['B_avg_SUB_ATT']
+        stats['avg_KD'] = last_fight['B_avg_KD']
+        stats['avg_CTRL_time'] = last_fight['B_avg_CTRL_time(seconds)']
         
     return stats
 
 def main():
-    st.title("🥊 UFC Fight Predictor (Baseline)")
-    st.markdown("Wähle zwei Kämpfer aus und lass das Logistische-Regression-Modell den wahrscheinlichen Gewinner berechnen!")
+    st.title("🥊 UFC Fight Predictor")
+    st.markdown("Wähle zwei Kämpfer aus und lass das Modell den wahrscheinlichen Gewinner berechnen!")
     
-    with st.spinner("Lade Daten und trainiere Baseline-Modell..."):
+    with st.spinner("Lade Daten und Modelle..."):
         try:
-            df, model, df_model = load_data()
-        except FileNotFoundError:
-            st.error("❌ Datei ../data/cleaned_ufc_data.csv nicht gefunden. Bitte zuerst dataCleaning.py ausführen.")
+            df, baseline_model, advanced_model, df_model = load_data()
+        except FileNotFoundError as e:
+            st.error(f"❌ Datei 'cleaned_ufc_data.csv' nicht gefunden: {e}")
             return
+
+    # Model Selection UI
+    st.markdown("### 🧠 Modellauswahl")
+    model_choice = st.radio(
+        "Wähle das Modell für die Vorhersage:",
+        ["Baseline (Logistische Regression)", "Advanced (Random Forest)"],
+        horizontal=True
+    )
+    
+    if model_choice == "Advanced (Random Forest)" and not advanced_model:
+        st.warning("⚠️ Advanced Modell nicht gefunden. Bitte trainiere es zuerst mit `advanced_model.py`.")
+        model_choice = "Baseline (Logistische Regression)"
+
+    st.markdown("---")
 
     fighters = get_fighters_list(df)
     
@@ -160,21 +205,63 @@ def main():
     diff_wins = red_stats['wins'] - blue_stats['wins']
     diff_streak = red_stats['streak'] - blue_stats['streak']
     diff_age = red_stats['age'] - blue_stats['age']
-    
-    X_pred = pd.DataFrame([[diff_form, diff_wins, diff_streak, diff_age]], columns=['diff_recent_form', 'diff_wins', 'diff_current_win_streak', 'diff_age'])
+    diff_height = red_stats['height'] - blue_stats['height']
+    diff_reach = red_stats['reach'] - blue_stats['reach']
+    diff_avg_SIG_STR_landed = red_stats['avg_SIG_STR_landed'] - blue_stats['avg_SIG_STR_landed']
+    diff_avg_TD_landed = red_stats['avg_TD_landed'] - blue_stats['avg_TD_landed']
+    diff_avg_SUB_ATT = red_stats['avg_SUB_ATT'] - blue_stats['avg_SUB_ATT']
+    diff_avg_KD = red_stats['avg_KD'] - blue_stats['avg_KD']
+    diff_avg_CTRL_time = red_stats['avg_CTRL_time'] - blue_stats['avg_CTRL_time']
+
+    # NA Handling für Advanced Features
+    X_pred_adv_dict = {
+        'diff_recent_form': [diff_form],
+        'diff_wins': [diff_wins],
+        'diff_current_win_streak': [diff_streak],
+        'diff_height': [diff_height],
+        'diff_reach': [diff_reach],
+        'diff_avg_SIG_STR_landed': [diff_avg_SIG_STR_landed],
+        'diff_avg_TD_landed': [diff_avg_TD_landed],
+        'diff_avg_SUB_ATT': [diff_avg_SUB_ATT],
+        'diff_avg_KD': [diff_avg_KD],
+        'diff_avg_CTRL_time': [diff_avg_CTRL_time]
+    }
     
     # Button für Prediction
     if st.button("Vorhersage berechnen 🎲", use_container_width=True):
+        
+        # Check for NaNs before prediction
+        if model_choice == "Advanced (Random Forest)":
+            # Advanced needs all advanced features
+            has_nan = any(pd.isna(val[0]) for val in X_pred_adv_dict.values())
+            if has_nan:
+                st.error("Nicht ausreichend Datenpunkte (Größe, Reichweite oder spezifische Kampf-Metriken) für die gewählten Kämpfer vorhanden, um das Advanced Modell anzuwenden. Bitte wähle andere Kämpfer oder wechsle zum Baseline Modell.")
+                return
+        
         with st.spinner("Modell berechnet..."):
             time.sleep(0.5) # Kleiner Delay für dramatischeren Effekt
             
-            prediction = model.predict(X_pred)[0]
-            probabilities = model.predict_proba(X_pred)[0]
+            if model_choice == "Baseline (Logistische Regression)":
+                X_pred = pd.DataFrame({
+                    'diff_recent_form': [diff_form],
+                    'diff_wins': [diff_wins],
+                    'diff_current_win_streak': [diff_streak],
+                    'diff_age': [diff_age]
+                })
+                model_to_use = baseline_model
+                acc_info = "Baseline Modell mit 4 Features (Accuracy auf Testdaten: ~64%)."
+            else:
+                X_pred = pd.DataFrame(X_pred_adv_dict)
+                model_to_use = advanced_model
+                acc_info = "Advanced Modell (Random Forest) mit 10 Features (ohne Alter, Accuracy auf Testdaten: ~64%)."
             
-            prob_red = probabilities[1]
+            prediction = model_to_use.predict(X_pred)[0]
+            probabilities = model_to_use.predict_proba(X_pred)[0]
+            
             prob_blue = probabilities[0]
+            prob_red = probabilities[1]
             
-            st.markdown("### 📊 Vorhersage-Ergebnis")
+            st.markdown(f"### 📊 Vorhersage-Ergebnis ({model_choice})")
             
             if prediction == 1:
                 st.success(f"🏆 Das Modell sagt voraus: **{red_fighter} (Red Corner) gewinnt!**")
@@ -187,7 +274,14 @@ def main():
             st.markdown(f"**Gewinnwahrscheinlichkeit Blaue Ecke ({blue_fighter}):** {prob_blue*100:.1f}%")
             st.progress(float(prob_blue))
             
-            st.caption(f"Baseline Modell mit 4 Features (Accuracy auf Testdaten: ~66%). Trainiert auf {len(df_model)} Matches.")
+            st.caption(f"{acc_info} Trainiert auf {len(df_model)} Matches.")
+            
+            # Feature Importance Show (only for Advanced)
+            base_dir = os.path.dirname(__file__)
+            importance_path = os.path.join(base_dir, "..", "data", "feature_importances.png")
+            if model_choice == "Advanced (Random Forest)" and os.path.exists(importance_path):
+                with st.expander("Warum hat das Modell so entschieden? (Feature Importance ansehen)"):
+                    st.image(importance_path, caption="Wichtigkeit der verschiedenen Statistiken für das Advanced Modell", use_container_width=True)
 
 if __name__ == "__main__":
     main()
