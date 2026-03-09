@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, mean_absolute_error
 import os
 
 def train_and_save_models():
@@ -115,6 +115,87 @@ def train_and_save_models():
     plot_path = "../data/feature_importances.png"
     plt.savefig(plot_path)
     print(f"📊 Feature Importance Plot gespeichert unter {plot_path}")
+
+    # ---------------------------------------------------------
+    # RUNDENVORHERSAGE: Separates vs. Kombiniertes Modell
+    # ---------------------------------------------------------
+    print("\n" + "="*60)
+    print("🔬 MODELL-VERGLEICH: Rundenvorhersage (finish_round)")
+    print("="*60)
+
+    round_target = 'finish_round'
+
+    # Features für separates Rundenmodell (erweitert)
+    round_features_sep = [
+        'diff_recent_form',
+        'diff_wins',
+        'diff_current_win_streak',
+        'diff_avg_SIG_STR_landed',
+        'diff_avg_TD_landed',
+        'diff_avg_SUB_ATT',
+        'diff_avg_KD',
+        'diff_avg_CTRL_time'
+    ]
+
+    # Features für kombiniertes Modell (dieselben wie Sieger-Modell)
+    round_features_com = [
+        'diff_recent_form',
+        'diff_wins',
+        'diff_current_win_streak',
+        'diff_age'
+    ]
+
+    if round_target in df.columns:
+        # Datenvorbereitung
+        all_round_feats = list(set(round_features_sep + round_features_com + [round_target]))
+        df_round = df.dropna(subset=all_round_feats).copy()
+        df_round[round_target] = df_round[round_target].astype(int)
+
+        print(f"📈 Datenpunkte für Rundenvorhersage: {len(df_round)}")
+
+        if len(df_round) >= 50:
+            X_r_sep = df_round[round_features_sep]
+            X_r_com = df_round[round_features_com]
+            y_r     = df_round[round_target]
+
+            Xrs_tr, Xrs_te, yr_tr, yr_te = train_test_split(X_r_sep, y_r, test_size=0.2, random_state=42)
+            Xrc_tr, Xrc_te, _,    _      = train_test_split(X_r_com, y_r, test_size=0.2, random_state=42)
+
+            # Separates Modell
+            rf_sep = RandomForestClassifier(n_estimators=100, random_state=42)
+            rf_sep.fit(Xrs_tr, yr_tr)
+            pred_sep = rf_sep.predict(Xrs_te)
+            acc_sep  = accuracy_score(yr_te, pred_sep)
+            mae_sep  = mean_absolute_error(yr_te, pred_sep)
+
+            # Kombiniertes Modell
+            rf_com = RandomForestClassifier(n_estimators=100, random_state=42)
+            rf_com.fit(Xrc_tr, yr_tr)
+            pred_com = rf_com.predict(Xrc_te)
+            acc_com  = accuracy_score(yr_te, pred_com)
+            mae_com  = mean_absolute_error(yr_te, pred_com)
+
+            print(f"\n📊 Separates Modell  (erweiterte Features):  Accuracy = {acc_sep*100:.2f}%  |  MAE = {mae_sep:.2f} Runden")
+            print(f"📊 Kombiniertes Modell (Sieger-Features):     Accuracy = {acc_com*100:.2f}%  |  MAE = {mae_com:.2f} Runden")
+
+            if acc_sep >= acc_com:
+                best_round_model = rf_sep
+                best_round_feats = round_features_sep
+                print(f"\n✅ Empfehlung: Separates Modell ist besser (+{(acc_sep-acc_com)*100:.2f}% Accuracy).")
+            else:
+                best_round_model = rf_com
+                best_round_feats = round_features_com
+                print(f"\n✅ Empfehlung: Kombiniertes Modell ist besser (+{(acc_com-acc_sep)*100:.2f}% Accuracy).")
+
+            # Bestes Rundenmodell speichern
+            round_model_path = "../data/round_model.pkl"
+            with open(round_model_path, 'wb') as f:
+                pickle.dump({'model': best_round_model, 'features': best_round_feats}, f)
+            print(f"💾 Bestes Rundenmodell gespeichert: {round_model_path}")
+        else:
+            print("⚠️ Zu wenige Datenpunkte für Rundenvorhersage – wird übersprungen.")
+    else:
+        print(f"⚠️ Spalte '{round_target}' nicht im Datensatz – Rundenvorhersage übersprungen.")
 
     # ---------------------------------------------------------
     # SAVE MODELS
