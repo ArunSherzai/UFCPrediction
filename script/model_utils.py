@@ -288,6 +288,21 @@ def load_artifact(path):
         return pickle.load(handle)
 
 
+def validate_artifact(artifact):
+    if not artifact:
+        return
+
+    model = artifact.get("model")
+    features = artifact.get("features", [])
+    if model is None:
+        raise ValueError("Artifact enthält kein Modell.")
+
+    X_probe = pd.DataFrame([{feature: 0.0 for feature in features}])
+    model.predict(X_probe)
+    if hasattr(model, "predict_proba"):
+        model.predict_proba(X_probe)
+
+
 def save_model_summary(summary, path=MODEL_SUMMARY_PATH):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(summary, handle, ensure_ascii=True, indent=2)
@@ -356,3 +371,36 @@ def train_all_models(data_path=CLEAN_DATA_PATH, output_paths=None):
         "fight_method": method_artifact,
         "summary": summary,
     }
+
+
+def load_runtime_artifacts(data_path=CLEAN_DATA_PATH, output_paths=None):
+    output_paths = output_paths or DEFAULT_MODEL_PATHS
+    expected_paths = {
+        key: os.path.join(DATA_DIR, os.path.basename(path))
+        for key, path in output_paths.items()
+    }
+
+    winner_required = ["winner_baseline", "winner_advanced"]
+    missing_winner = any(not os.path.exists(expected_paths[key]) for key in winner_required)
+    if missing_winner:
+        train_all_models(data_path=data_path, output_paths=expected_paths)
+
+    try:
+        baseline_artifact = load_artifact(expected_paths["winner_baseline"])
+        advanced_artifact = load_artifact(expected_paths["winner_advanced"])
+        round_artifact = load_artifact(expected_paths["fight_round"]) if os.path.exists(expected_paths["fight_round"]) else None
+        method_artifact = load_artifact(expected_paths["fight_method"]) if os.path.exists(expected_paths["fight_method"]) else None
+
+        validate_artifact(baseline_artifact)
+        validate_artifact(advanced_artifact)
+        validate_artifact(round_artifact)
+        validate_artifact(method_artifact)
+    except Exception:
+        train_all_models(data_path=data_path, output_paths=expected_paths)
+        baseline_artifact = load_artifact(expected_paths["winner_baseline"])
+        advanced_artifact = load_artifact(expected_paths["winner_advanced"])
+        round_artifact = load_artifact(expected_paths["fight_round"]) if os.path.exists(expected_paths["fight_round"]) else None
+        method_artifact = load_artifact(expected_paths["fight_method"]) if os.path.exists(expected_paths["fight_method"]) else None
+
+    summary = load_model_summary(os.path.join(DATA_DIR, os.path.basename(MODEL_SUMMARY_PATH)))
+    return expected_paths, baseline_artifact, advanced_artifact, round_artifact, method_artifact, summary

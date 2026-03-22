@@ -5,10 +5,8 @@ from model_utils import (
     DEFAULT_MODEL_PATHS,
     WINNER_BASE_FEATURES,
     WINNER_ADVANCED_FEATURES,
-    load_artifact,
     load_clean_data,
-    load_model_summary,
-    train_all_models,
+    load_runtime_artifacts,
 )
 
 
@@ -63,12 +61,11 @@ def build_diff_frame(red_stats, blue_stats):
 
 def ensure_artifacts():
     base_dir = os.path.dirname(__file__)
-    model_paths = {
+    requested_paths = {
         key: os.path.join(base_dir, "..", "data", os.path.basename(path))
         for key, path in DEFAULT_MODEL_PATHS.items()
     }
-    if not os.path.exists(model_paths["winner_baseline"]) or not os.path.exists(model_paths["winner_advanced"]):
-        train_all_models(output_paths=model_paths)
+    model_paths, _, _, _, _, _ = load_runtime_artifacts(output_paths=requested_paths)
     return model_paths
 
 
@@ -113,11 +110,8 @@ def predict_head_to_head(df, baseline_artifact, advanced_artifact):
 
 
 def test_model():
-    model_paths = ensure_artifacts()
     df = load_clean_data()
-    baseline_artifact = load_artifact(model_paths["winner_baseline"])
-    advanced_artifact = load_artifact(model_paths["winner_advanced"])
-    summary = load_model_summary()
+    _, baseline_artifact, advanced_artifact, _, _, summary = load_runtime_artifacts()
     show_summary(summary)
 
     while True:

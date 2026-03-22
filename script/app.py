@@ -17,6 +17,7 @@ from model_utils import (
     load_artifact,
     load_clean_data,
     load_model_summary,
+    load_runtime_artifacts,
     train_all_models,
 )
 
@@ -135,6 +136,73 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     font-size: 12px;
     border: 1px solid rgba(255,255,255,0.06);
 }
+.panel-badge-prime {
+    background: linear-gradient(135deg, rgba(255,215,0,0.22), rgba(255,184,28,0.4));
+    color: #fff2b3;
+    border-color: rgba(255,215,0,0.55);
+    box-shadow: 0 0 18px rgba(255,215,0,0.18);
+    font-weight: 700;
+}
+.prime-note {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    color: #d7dfef;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.prime-note strong {
+    color: #ffd86b;
+}
+.compare-card {
+    margin-top: 14px;
+    padding: 18px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.compare-title {
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #97a3bf;
+    margin-bottom: 12px;
+}
+.compare-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+.compare-item {
+    border-radius: 14px;
+    padding: 14px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.compare-label {
+    font-size: 11px;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    color: #8d99ae;
+    margin-bottom: 8px;
+}
+.compare-main {
+    font-size: 20px;
+    font-weight: 800;
+    color: #edf2ff;
+    margin-bottom: 6px;
+}
+.compare-sub {
+    color: #c8d1e8;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.compare-note {
+    margin-top: 12px;
+    color: #c8d1e8;
+    font-size: 12px;
+    line-height: 1.6;
+}
 .vs-core {
     height: 100%;
     min-height: 150px;
@@ -247,6 +315,13 @@ PLACEHOLDER_IMG = os.path.join(
     os.path.dirname(__file__), "..", "data", "fighter_images", "placeholder.png"
 )
 
+FIGHTER_DETAILS_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "data", "row_fighter_details.csv"
+)
+BOOKMAKER_ODDS_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "data", "bookmaker_odds.csv"
+)
+
 # ─────────────────────────────────────────────────────────────
 # MODELL-FEATURES
 # ─────────────────────────────────────────────────────────────
@@ -283,21 +358,14 @@ def load_everything():
     base_dir = os.path.dirname(__file__)
     data_path = os.path.join(base_dir, "..", "data", "cleaned_ufc_data.csv")
     df = load_clean_data(data_path)
-
     model_paths = {
         key: os.path.join(base_dir, "..", "data", os.path.basename(path))
         for key, path in DEFAULT_MODEL_PATHS.items()
     }
-    summary_path = os.path.join(base_dir, "..", "data", "model_summary.json")
-
-    if not all(os.path.exists(path) for path in model_paths.values() if "method" not in path and "round" not in path):
-        train_all_models(data_path=data_path, output_paths=model_paths)
-
-    baseline_artifact = load_artifact(model_paths["winner_baseline"])
-    advanced_artifact = load_artifact(model_paths["winner_advanced"])
-    round_artifact = load_artifact(model_paths["fight_round"]) if os.path.exists(model_paths["fight_round"]) else None
-    method_artifact = load_artifact(model_paths["fight_method"]) if os.path.exists(model_paths["fight_method"]) else None
-    summary = load_model_summary(summary_path)
+    _, baseline_artifact, advanced_artifact, round_artifact, method_artifact, summary = load_runtime_artifacts(
+        data_path=data_path,
+        output_paths=model_paths,
+    )
 
     return df, baseline_artifact, advanced_artifact, round_artifact, method_artifact, summary
 
@@ -306,6 +374,221 @@ def load_everything():
 def get_fighters(df):
     fighters = set(df['R_fighter'].dropna()).union(set(df['B_fighter'].dropna()))
     return sorted(fighters)
+
+
+@st.cache_data
+def load_fighter_bios():
+    if not os.path.exists(FIGHTER_DETAILS_PATH):
+        return {}
+
+    bios = pd.read_csv(FIGHTER_DETAILS_PATH, usecols=["fighter_name", "DOB"])
+    bios["DOB_dt"] = pd.to_datetime(bios["DOB"], errors="coerce")
+    bios = bios.dropna(subset=["fighter_name"]).drop_duplicates(subset=["fighter_name"], keep="first")
+    return {
+        row["fighter_name"]: row["DOB_dt"]
+        for _, row in bios.iterrows()
+        if pd.notna(row["DOB_dt"])
+    }
+
+
+def compute_current_age(name, reference_date=None, fallback_age=np.nan):
+    dob = load_fighter_bios().get(name)
+    if pd.notna(dob):
+        age_reference = pd.Timestamp(reference_date) if reference_date is not None else pd.Timestamp(date.today())
+        return round((age_reference - dob).days / 365.25, 2)
+    return fallback_age
+
+
+def normalize_fighter_name(name):
+    cleaned = str(name or "").strip().lower()
+    cleaned = cleaned.replace(".", "")
+    cleaned = cleaned.replace("'", "")
+    cleaned = cleaned.replace("-", " ")
+    return " ".join(cleaned.split())
+
+
+@st.cache_data
+def _load_bookmaker_odds_cached(_cache_token):
+    columns = [
+        "event_name", "event_date", "bookmaker_name", "market",
+        "fighter_a", "fighter_b", "fighter_a_decimal_odds", "fighter_b_decimal_odds",
+        "fighter_a_implied_prob", "fighter_b_implied_prob", "bookmaker_reason", "odds_timestamp",
+    ]
+    if not os.path.exists(BOOKMAKER_ODDS_PATH):
+        return pd.DataFrame(columns=columns)
+
+    odds = pd.read_csv(BOOKMAKER_ODDS_PATH)
+    for column in columns:
+        if column not in odds.columns:
+            odds[column] = np.nan
+    odds["event_date"] = pd.to_datetime(odds["event_date"], errors="coerce")
+    odds["odds_timestamp"] = pd.to_datetime(odds["odds_timestamp"], errors="coerce")
+    odds["fighter_a_norm"] = odds["fighter_a"].map(normalize_fighter_name)
+    odds["fighter_b_norm"] = odds["fighter_b"].map(normalize_fighter_name)
+    return odds
+
+
+def load_bookmaker_odds():
+    cache_token = None
+    if os.path.exists(BOOKMAKER_ODDS_PATH):
+        stat = os.stat(BOOKMAKER_ODDS_PATH)
+        cache_token = (stat.st_mtime_ns, stat.st_size)
+    return _load_bookmaker_odds_cached(cache_token)
+
+
+def find_actual_fight(df, red_name, blue_name, reference_date):
+    fights = df[
+        (
+            ((df["R_fighter"] == red_name) & (df["B_fighter"] == blue_name))
+            | ((df["R_fighter"] == blue_name) & (df["B_fighter"] == red_name))
+        )
+    ].copy()
+    if fights.empty:
+        return None
+
+    fights["date"] = pd.to_datetime(fights["date"], errors="coerce")
+    ref_ts = pd.Timestamp(reference_date) if reference_date is not None else fights["date"].max()
+    fights = fights[fights["date"] <= ref_ts].sort_values("date", ascending=False)
+    if fights.empty:
+        return None
+    return fights.iloc[0]
+
+
+def format_decimal_odds(value):
+    if pd.isna(value):
+        return "k.A."
+    return f"{float(value):.2f}"
+
+
+def format_pct(value):
+    if pd.isna(value):
+        return "k.A."
+    return f"{float(value) * 100:.1f}%"
+
+
+def lookup_bookmaker_context(df, red_name, blue_name, reference_date):
+    odds = load_bookmaker_odds()
+    actual_fight = find_actual_fight(df, red_name, blue_name, reference_date)
+    if odds.empty:
+        return {"odds": None, "actual_fight": actual_fight}
+
+    red_norm = normalize_fighter_name(red_name)
+    blue_norm = normalize_fighter_name(blue_name)
+    matches = odds[
+        (
+            ((odds["fighter_a_norm"] == red_norm) & (odds["fighter_b_norm"] == blue_norm))
+            | ((odds["fighter_a_norm"] == blue_norm) & (odds["fighter_b_norm"] == red_norm))
+        )
+    ].copy()
+    if matches.empty:
+        return {"odds": None, "actual_fight": actual_fight}
+
+    if actual_fight is not None and pd.notna(actual_fight["date"]):
+        exact_date_matches = matches[matches["event_date"] == pd.Timestamp(actual_fight["date"])]
+        if not exact_date_matches.empty:
+            matches = exact_date_matches
+
+    ref_ts = pd.Timestamp(reference_date) if reference_date is not None else pd.Timestamp.max
+    valid_by_date = matches[matches["event_date"].isna() | (matches["event_date"] <= ref_ts)]
+    if not valid_by_date.empty:
+        matches = valid_by_date
+
+    matches["completeness_score"] = (
+        matches["fighter_a_implied_prob"].notna().astype(int)
+        + matches["fighter_b_implied_prob"].notna().astype(int)
+    )
+    matches = matches.sort_values(
+        ["completeness_score", "event_date", "odds_timestamp"],
+        ascending=[False, False, False],
+        na_position="last",
+    )
+    best = matches.iloc[0]
+    swapped = best["fighter_a_norm"] != red_norm
+
+    red_odds = best["fighter_b_decimal_odds"] if swapped else best["fighter_a_decimal_odds"]
+    blue_odds = best["fighter_a_decimal_odds"] if swapped else best["fighter_b_decimal_odds"]
+    red_prob = best["fighter_b_implied_prob"] if swapped else best["fighter_a_implied_prob"]
+    blue_prob = best["fighter_a_implied_prob"] if swapped else best["fighter_b_implied_prob"]
+    if pd.notna(red_prob) and pd.notna(blue_prob):
+        favorite = red_name if float(red_prob) >= float(blue_prob) else blue_name
+    elif pd.notna(red_prob):
+        favorite = red_name
+    elif pd.notna(blue_prob):
+        favorite = blue_name
+    elif pd.notna(red_odds) and pd.notna(blue_odds):
+        favorite = red_name if float(red_odds) <= float(blue_odds) else blue_name
+    else:
+        favorite = "k.A."
+
+    return {
+        "odds": {
+            "event_name": best.get("event_name"),
+            "event_date": best.get("event_date"),
+            "bookmaker_name": best.get("bookmaker_name"),
+            "market": best.get("market"),
+            "red_odds": red_odds,
+            "blue_odds": blue_odds,
+            "red_prob": red_prob,
+            "blue_prob": blue_prob,
+            "favorite": favorite,
+            "reason": best.get("bookmaker_reason"),
+        },
+        "actual_fight": actual_fight,
+    }
+
+
+def render_prediction_comparison(model_pick, model_prob, bookmaker_context, actual_fight, red_name, blue_name):
+    bookmaker = bookmaker_context.get("odds") if bookmaker_context else None
+    if actual_fight is not None and pd.notna(actual_fight.get("date")):
+        if actual_fight["R_fighter"] == red_name:
+            actual_winner = red_name if actual_fight["Winner"] == "Red" else blue_name if actual_fight["Winner"] == "Blue" else "Draw / NC"
+        else:
+            actual_winner = blue_name if actual_fight["Winner"] == "Red" else red_name if actual_fight["Winner"] == "Blue" else "Draw / NC"
+        actual_main = actual_winner
+        actual_sub = pd.Timestamp(actual_fight["date"]).strftime("%Y-%m-%d")
+    else:
+        actual_main = "Offen"
+        actual_sub = "Noch kein Ergebnis für diesen Fight"
+
+    if bookmaker:
+        bookmaker_main = bookmaker["favorite"]
+        bookmaker_sub = (
+            f"{red_name}: {format_decimal_odds(bookmaker['red_odds'])} ({format_pct(bookmaker['red_prob'])})<br>"
+            f"{blue_name}: {format_decimal_odds(bookmaker['blue_odds'])} ({format_pct(bookmaker['blue_prob'])})<br>"
+            f"{bookmaker.get('bookmaker_name') or 'Bookmaker'}"
+        )
+        bookmaker_note = bookmaker.get("reason") or "Keine externe Buchmacher-Erklärung verfügbar."
+    else:
+        bookmaker_main = "Keine echten Odds"
+        bookmaker_sub = "Für dieses Matchup wurde kein sauber zuordenbarer Buchmacher-Markt gefunden."
+        bookmaker_note = "Buchmacher-Daten werden nur bei realen, eindeutig gematchten Kämpfen angezeigt."
+
+    st.markdown(
+        f"""
+        <div class="compare-card">
+            <div class="compare-title">Modell vs. Buchmacher vs. Outcome</div>
+            <div class="compare-grid">
+                <div class="compare-item">
+                    <div class="compare-label">Unser Modell</div>
+                    <div class="compare-main">{model_pick}</div>
+                    <div class="compare-sub">{format_pct(model_prob)} Siegwahrscheinlichkeit</div>
+                </div>
+                <div class="compare-item">
+                    <div class="compare-label">Buchmacher</div>
+                    <div class="compare-main">{bookmaker_main}</div>
+                    <div class="compare-sub">{bookmaker_sub}</div>
+                </div>
+                <div class="compare-item">
+                    <div class="compare-label">Tatsächliches Ergebnis</div>
+                    <div class="compare-main">{actual_main}</div>
+                    <div class="compare-sub">{actual_sub}</div>
+                </div>
+            </div>
+            <div class="compare-note"><strong>Bookmaker-Notiz:</strong> {bookmaker_note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def get_stats(df, name, reference_date=None):
@@ -363,8 +646,14 @@ def get_stats(df, name, reference_date=None):
     else:
         days_since_last_fight = row.get(f'{p}days_since_last_fight', np.nan)
 
+    current_age = compute_current_age(
+        name,
+        reference_date=reference_date,
+        fallback_age=row.get(f'{p}age', np.nan),
+    )
+
     return {
-        'age':                 row.get(f'{p}age', np.nan),
+        'age':                 current_age,
         'wins':                wins,
         'losses':              losses,
         'streak':              streak,
@@ -393,6 +682,78 @@ def safe(v, fmt=".1f", fallback="k.A."):
         return f"{float(v):{fmt}}" if pd.notna(v) else fallback
     except Exception:
         return fallback
+
+
+PRIME_AGE_MIN = 27
+PRIME_AGE_MAX = 33
+PRIME_FORM_MIN = 0.67
+PRIME_STREAK_MIN = 2
+PRIME_WINS_MIN = 5
+PRIME_AVERAGE_RANGE = "27-33 Jahre"
+PRIME_AVERAGE_CENTER = "ca. 30 Jahre"
+
+
+def get_prime_status(stats):
+    age = stats.get('age', np.nan)
+    form = stats.get('form', np.nan)
+    streak = stats.get('streak', np.nan)
+    wins = stats.get('wins', np.nan)
+
+    if any(pd.isna(value) for value in (age, form, streak, wins)):
+        return {
+            'is_prime': False,
+            'badge_html': f'<div class="panel-badge">Prime-Fenster: {PRIME_AVERAGE_RANGE}</div>',
+            'reason': (
+                f"Prime nicht sicher bestimmbar. Typisch liegt die Prime im Datensatz bei "
+                f"{PRIME_AVERAGE_RANGE} mit Zentrum um {PRIME_AVERAGE_CENTER}."
+            ),
+        }
+
+    age_value = float(age)
+    form_value = float(form)
+    streak_value = float(streak)
+    wins_value = float(wins)
+
+    in_age_window = PRIME_AGE_MIN <= age_value <= PRIME_AGE_MAX
+    strong_form = form_value >= PRIME_FORM_MIN
+    on_streak = streak_value >= PRIME_STREAK_MIN
+    established = wins_value >= PRIME_WINS_MIN
+    is_prime = in_age_window and strong_form and on_streak and established
+
+    if is_prime:
+        reason = (
+            f"Ist in seiner Prime: {safe(age_value, '.1f')} Jahre, Form {form_value * 100:.0f}%, "
+            f"Siegesserie von {safe(streak_value, 'g')} und {safe(wins_value, 'g')} UFC-Siegen."
+        )
+        badge_html = '<div class="panel-badge panel-badge-prime">★ Prime</div>'
+    else:
+        reason_parts = []
+        if not in_age_window:
+            reason_parts.append(
+                f"Alter {safe(age_value, '.1f')} liegt außerhalb des typischen Prime-Fensters"
+            )
+        if not strong_form:
+            reason_parts.append(f"Form mit {form_value * 100:.0f}% ist aktuell zu schwach")
+        if not on_streak:
+            reason_parts.append(
+                f"Siegesserie ist mit {safe(streak_value, 'g')} noch nicht stark genug"
+            )
+        if not established:
+            reason_parts.append(
+                f"mit {safe(wins_value, 'g')} UFC-Siegen ist die Datenbasis noch zu klein"
+            )
+        reason = "Noch nicht in Prime: " + "; ".join(reason_parts) + "."
+        badge_html = f'<div class="panel-badge">Prime-Fenster: {PRIME_AVERAGE_RANGE}</div>'
+
+    reason += (
+        f" Im Durchschnitt liegt die Prime hier bei {PRIME_AVERAGE_RANGE}, "
+        f"mit Zentrum um {PRIME_AVERAGE_CENTER}."
+    )
+    return {
+        'is_prime': is_prime,
+        'badge_html': badge_html,
+        'reason': reason,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -478,6 +839,7 @@ def fighter_panel(name, stats, corner):
     finish_rate = f"{float(stats['finish_rate'])*100:.0f}%" if pd.notna(stats['finish_rate']) else "k.A."
     ko_wins = safe(stats['ko_wins'], "g")
     sub_wins = safe(stats['sub_wins'], "g")
+    prime = get_prime_status(stats)
 
     st.markdown(f"""
     <div class="fighter-panel {panel_cls}">
@@ -489,7 +851,9 @@ def fighter_panel(name, stats, corner):
             <div class="panel-badge">Form: {form_pct}</div>
             <div class="panel-badge">Serie: {streak}</div>
             <div class="panel-badge">Reach: {reach}</div>
+            {prime['badge_html']}
         </div>
+        <div class="prime-note"><strong>Prime-Status:</strong> {prime['reason']}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -791,6 +1155,8 @@ def main():
         loser_name  = blue_name if pred == 1 else red_name
         corner_cls  = "verdict-red" if pred == 1 else "verdict-blue"
         corner_col  = "#ff4b4b"     if pred == 1 else "#4b8bff"
+        bookmaker_context = lookup_bookmaker_context(df, red_name, blue_name, reference_date)
+        model_prob = prob_red if pred == 1 else prob_blue
 
         # ── Ergebnis-Box ──────────────────────────────────────
         st.markdown(f"""
@@ -800,6 +1166,14 @@ def main():
             <div style="color:#aaa;font-size:14px;">gewinnt gegen {loser_name}</div>
         </div>
         """, unsafe_allow_html=True)
+        render_prediction_comparison(
+            winner_name,
+            model_prob,
+            bookmaker_context,
+            bookmaker_context.get("actual_fight"),
+            red_name,
+            blue_name,
+        )
 
         # ── Wahrscheinlichkeits-Balken ─────────────────────────
         col_pr, col_pb = st.columns(2)

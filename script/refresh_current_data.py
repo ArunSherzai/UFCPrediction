@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -32,12 +33,29 @@ MAIN_DATA_PATH = DATA_DIR / "data.csv"
 REFRESH_METADATA_PATH = DATA_DIR / "refresh_metadata.json"
 SCRAPE_CACHE_PATH = DATA_DIR / "new_fights_cache.csv"
 SCRAPE_PROGRESS_PATH = DATA_DIR / "new_fights_progress.json"
+BOOKMAKER_ODDS_PATH = DATA_DIR / "bookmaker_odds.csv"
+ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/mma_mixed_martial_arts/odds"
 
 RAW_COLUMNS = [
     "R_fighter", "B_fighter", "R_KD", "B_KD", "R_SIG_STR.", "B_SIG_STR.", "R_SIG_STR_pct", "B_SIG_STR_pct",
     "R_TOTAL_STR.", "B_TOTAL_STR.", "R_TD", "B_TD", "R_TD_pct", "B_TD_pct", "R_SUB_ATT", "B_SUB_ATT",
     "R_REV", "B_REV", "R_CTRL", "B_CTRL", "win_by", "last_round", "last_round_time", "Format",
     "Referee", "date", "location", "Fight_type", "Winner"
+]
+
+BOOKMAKER_ODDS_COLUMNS = [
+    "event_name",
+    "event_date",
+    "bookmaker_name",
+    "market",
+    "fighter_a",
+    "fighter_b",
+    "fighter_a_decimal_odds",
+    "fighter_b_decimal_odds",
+    "fighter_a_implied_prob",
+    "fighter_b_implied_prob",
+    "bookmaker_reason",
+    "odds_timestamp",
 ]
 
 
@@ -58,6 +76,14 @@ def parse_date(value):
     if pd.isna(value):
         return pd.NaT
     return pd.to_datetime(value, errors="coerce")
+
+
+def normalize_fighter_name(name):
+    cleaned = str(name or "").strip().lower()
+    cleaned = cleaned.replace(".", "")
+    cleaned = cleaned.replace("'", "")
+    cleaned = cleaned.replace("-", " ")
+    return " ".join(cleaned.split())
 
 
 def load_existing_raw():
@@ -312,6 +338,208 @@ def scrape_fighter_details(fighter_urls):
             print(f"  Fighter failed: {fighter_name} -> {exc}")
         time.sleep(0.1)
     return pd.DataFrame(rows)
+
+
+def load_existing_bookmaker_odds():
+    if not BOOKMAKER_ODDS_PATH.exists():
+        return pd.DataFrame(columns=BOOKMAKER_ODDS_COLUMNS)
+    odds = pd.read_csv(BOOKMAKER_ODDS_PATH)
+    for column in BOOKMAKER_ODDS_COLUMNS:
+        if column not in odds.columns:
+            odds[column] = np.nan
+    return odds[BOOKMAKER_ODDS_COLUMNS].copy()
+
+
+def decimal_implied_probability(odds_value):
+    try:
+        decimal_odds = float(odds_value)
+        if decimal_odds <= 0:
+            return np.nan
+        return round(1.0 / decimal_odds, 6)
+    except Exception:
+        return np.nan
+
+
+def american_to_decimal(odds_value):
+    try:
+        text = str(odds_value).strip()
+        if text in {"", "-", "+-", "nan", "None", "+0", "0"}:
+            return np.nan
+        american = int(text)
+        if american > 0:
+            return round(1 + (american / 100.0), 6)
+        return round(1 + (100.0 / abs(american)), 6)
+    except Exception:
+        return np.nan
+
+
+def scrape_covers_odds():
+    url = "https://www.covers.com/sport/mma/ufc/odds"
+    soup = BeautifulSoup(fetch(url), "html.parser")
+    rows = []
+
+    for event_heading in soup.find_all("h2"):
+        event_name = " ".join(event_heading.get_text(" ", strip=True).split())
+        if not event_name.startswith(("UFC", "MVP")):
+            continue
+
+        table = event_heading.find_next("table")
+        if table is None:
+            continue
+
+        event_date = np.nan
+        date_div = event_heading.find_next("div")
+        if date_div is not None:
+            date_text = " ".join(date_div.get_text(" ", strip=True).split())
+            if " ET" in date_text or "GMT" in date_text:
+                parsed = pd.to_datetime(date_text, errors="coerce")
+                if pd.notna(parsed):
+                    event_date = parsed.strftime("%Y-%m-%d")
+        if pd.isna(event_date):
+            event_date = pd.to_datetime(event_name, errors="coerce")
+            event_date = event_date.strftime("%Y-%m-%d") if pd.notna(event_date) else np.nan
+
+        headers = table.find_all("th")
+        if len(headers) < 5:
+            continue
+        sportsbook_names = ["Open"]
+        for th in headers[2:5]:
+            img = th.find("img")
+            sportsbook_names.append(img.get("alt", "Bookmaker") if img else "Bookmaker")
+
+        fight_rows = []
+        for tr in table.find_all("tr"):
+            cells = tr.find_all(["th", "td"])
+            if len(cells) != 5:
+                continue
+            fighter_img = cells[0].find("img")
+            if fighter_img is None:
+                continue
+            fighter_name = fighter_img.get("alt")
+            odds = [" ".join(cell.get_text(" ", strip=True).split()) for cell in cells[1:5]]
+            fight_rows.append({"fighter_name": fighter_name, "odds": odds})
+
+        for idx in range(0, len(fight_rows), 2):
+            pair = fight_rows[idx:idx + 2]
+            if len(pair) != 2:
+                continue
+            fighter_a = pair[0]["fighter_name"]
+            fighter_b = pair[1]["fighter_name"]
+            for book_idx, bookmaker_name in enumerate(sportsbook_names[1:], start=1):
+                fighter_a_decimal = american_to_decimal(pair[0]["odds"][book_idx])
+                fighter_b_decimal = american_to_decimal(pair[1]["odds"][book_idx])
+                if pd.isna(fighter_a_decimal) and pd.isna(fighter_b_decimal):
+                    continue
+                rows.append(
+                    {
+                        "event_name": event_name,
+                        "event_date": event_date,
+                        "bookmaker_name": bookmaker_name,
+                        "market": "h2h",
+                        "fighter_a": fighter_a,
+                        "fighter_b": fighter_b,
+                        "fighter_a_decimal_odds": fighter_a_decimal,
+                        "fighter_b_decimal_odds": fighter_b_decimal,
+                        "fighter_a_implied_prob": decimal_implied_probability(fighter_a_decimal),
+                        "fighter_b_implied_prob": decimal_implied_probability(fighter_b_decimal),
+                        "bookmaker_reason": np.nan,
+                        "odds_timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                )
+
+    if not rows:
+        return pd.DataFrame(columns=BOOKMAKER_ODDS_COLUMNS)
+    return pd.DataFrame(rows, columns=BOOKMAKER_ODDS_COLUMNS)
+
+
+def fetch_bookmaker_odds():
+    scraped = scrape_covers_odds()
+    if not scraped.empty:
+        return scraped
+
+    api_key = os.getenv("THE_ODDS_API_KEY")
+    if not api_key:
+        return pd.DataFrame(columns=BOOKMAKER_ODDS_COLUMNS)
+
+    params = {
+        "apiKey": api_key,
+        "regions": "us",
+        "markets": "h2h",
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+    }
+    response = requests.get(ODDS_API_URL, params=params, headers=HEADERS, timeout=30)
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        return pd.DataFrame(columns=BOOKMAKER_ODDS_COLUMNS)
+    payload = response.json()
+    rows = []
+
+    for event in payload:
+        event_name = event.get("commence_time")
+        event_date = pd.to_datetime(event.get("commence_time"), errors="coerce")
+        home_team = event.get("home_team")
+        away_team = event.get("away_team")
+        if not home_team or not away_team:
+            continue
+
+        bookmakers = event.get("bookmakers") or []
+        for bookmaker in bookmakers:
+            markets = bookmaker.get("markets") or []
+            for market in markets:
+                if market.get("key") != "h2h":
+                    continue
+                outcomes = market.get("outcomes") or []
+                if len(outcomes) != 2:
+                    continue
+                outcome_map = {outcome.get("name"): outcome.get("price") for outcome in outcomes}
+                fighter_a_odds = outcome_map.get(home_team)
+                fighter_b_odds = outcome_map.get(away_team)
+                rows.append(
+                    {
+                        "event_name": event.get("home_team") + " vs " + event.get("away_team"),
+                        "event_date": event_date.strftime("%Y-%m-%d") if pd.notna(event_date) else np.nan,
+                        "bookmaker_name": bookmaker.get("title"),
+                        "market": market.get("key"),
+                        "fighter_a": home_team,
+                        "fighter_b": away_team,
+                        "fighter_a_decimal_odds": fighter_a_odds,
+                        "fighter_b_decimal_odds": fighter_b_odds,
+                        "fighter_a_implied_prob": decimal_implied_probability(fighter_a_odds),
+                        "fighter_b_implied_prob": decimal_implied_probability(fighter_b_odds),
+                        "bookmaker_reason": np.nan,
+                        "odds_timestamp": pd.to_datetime(bookmaker.get("last_update"), errors="coerce").strftime("%Y-%m-%dT%H:%M:%SZ")
+                        if bookmaker.get("last_update") else np.nan,
+                    }
+                )
+
+    if not rows:
+        return pd.DataFrame(columns=BOOKMAKER_ODDS_COLUMNS)
+    return pd.DataFrame(rows, columns=BOOKMAKER_ODDS_COLUMNS)
+
+
+def refresh_bookmaker_odds():
+    existing = load_existing_bookmaker_odds()
+    fetched = fetch_bookmaker_odds()
+    if fetched.empty:
+        if not BOOKMAKER_ODDS_PATH.exists():
+            existing.to_csv(BOOKMAKER_ODDS_PATH, index=False)
+        return existing
+
+    combined = pd.concat([existing, fetched], ignore_index=True)
+    combined["event_date"] = pd.to_datetime(combined["event_date"], errors="coerce")
+    combined["odds_timestamp"] = pd.to_datetime(combined["odds_timestamp"], errors="coerce")
+    combined["fighter_a_norm"] = combined["fighter_a"].map(normalize_fighter_name)
+    combined["fighter_b_norm"] = combined["fighter_b"].map(normalize_fighter_name)
+    combined = combined.sort_values(["event_date", "odds_timestamp"], ascending=[False, False], na_position="last")
+    combined = combined.drop_duplicates(
+        subset=["event_date", "bookmaker_name", "market", "fighter_a_norm", "fighter_b_norm"],
+        keep="first",
+    )
+    combined = combined[BOOKMAKER_ODDS_COLUMNS]
+    combined.to_csv(BOOKMAKER_ODDS_PATH, index=False)
+    return combined
 
 
 def to_int(value):
@@ -659,12 +887,14 @@ def refresh():
     build_main_dataset_from_raw()
     clean_and_prepare_data()
     artifacts = train_all_models()
+    odds_frame = refresh_bookmaker_odds()
 
     cleaned = pd.read_csv(DATA_DIR / "cleaned_ufc_data.csv")
     metadata = {
         "refreshed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "latest_event_date": pd.to_datetime(cleaned["date"], errors="coerce").max().strftime("%Y-%m-%d"),
         "fight_rows": int(len(cleaned)),
+        "bookmaker_odds_rows": int(len(odds_frame)),
         "winner_balanced_accuracy": artifacts["summary"]["winner_advanced"]["balanced_accuracy"],
     }
     with open(REFRESH_METADATA_PATH, "w", encoding="utf-8") as handle:

@@ -1,6 +1,7 @@
 {
-  "refreshed_at": "2026-03-22T10:54:01Z",
+  "refreshed_at": "2026-03-22T14:11:24Z",
   "latest_event_date": "2026-03-21",
   "fight_rows": 8427,
-  "winner_balanced_accuracy": 0.592049192049192
+  "bookmaker_odds_rows": 98,
+  "winner_balanced_accuracy": 0.601980551980552
 }

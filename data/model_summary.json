@@ -14,9 +14,9 @@
     "test_rows": 1685
   },
   "winner_advanced": {
-    "accuracy": 0.6201780415430267,
-    "balanced_accuracy": 0.6028921778921779,
-    "roc_auc": 0.6458229658229659,
+    "accuracy": 0.6189910979228487,
+    "balanced_accuracy": 0.601980551980552,
+    "roc_auc": 0.6467109967109967,
     "majority_class_accuracy": 0.5608308605341247,
     "majority_class_balanced_accuracy": 0.5,
     "train_rows": 6742,
@@ -24,33 +24,33 @@
   },
   "recommended_winner_model": "winner_baseline",
   "round_model": {
-    "accuracy": 0.4540059347181009,
-    "balanced_accuracy": 0.25482524542307167,
-    "mae": 0.943026706231454,
+    "accuracy": 0.45222551928783383,
+    "balanced_accuracy": 0.2568879145647538,
+    "mae": 0.9394658753709199,
     "train_rows": 6742,
     "test_rows": 1685
   },
   "method_model": {
-    "accuracy": 0.4386904761904762,
-    "balanced_accuracy": 0.3601712279806844,
+    "accuracy": 0.4375,
+    "balanced_accuracy": 0.35988826750672565,
     "train_rows": 6723,
     "test_rows": 1680
   },
   "advanced_feature_importances": {
-    "diff_age": 0.16356453780928207,
-    "diff_total_rounds_fought": 0.09071426888845546,
-    "diff_avg_CTRL_time": 0.08478842492006435,
-    "diff_reach": 0.07458601578327141,
-    "diff_avg_KD": 0.07329772607361762,
-    "diff_avg_SIG_STR_landed": 0.06698420351448947,
-    "diff_total_time_fought": 0.06614916560050461,
-    "diff_td_defense_proxy": 0.06257896133093062,
-    "diff_sig_str_defense_proxy": 0.05992650361200088,
-    "diff_avg_TD_landed": 0.05862031842504577,
-    "diff_avg_SUB_ATT": 0.04991361788582164,
-    "diff_height": 0.049574226777643074,
-    "diff_wins": 0.04171520500622475,
-    "diff_current_win_streak": 0.03303968833556807,
-    "diff_recent_form": 0.024547136037080138
+    "diff_age": 0.16292231940929583,
+    "diff_total_rounds_fought": 0.09068692217461238,
+    "diff_avg_CTRL_time": 0.08491000133753779,
+    "diff_reach": 0.07471033476913654,
+    "diff_avg_KD": 0.07373331657860976,
+    "diff_avg_SIG_STR_landed": 0.06685156428639405,
+    "diff_total_time_fought": 0.06604606522247856,
+    "diff_td_defense_proxy": 0.06266526037527781,
+    "diff_sig_str_defense_proxy": 0.06000878524829975,
+    "diff_avg_TD_landed": 0.058506062785440904,
+    "diff_avg_SUB_ATT": 0.04988791645841174,
+    "diff_height": 0.04947645248713182,
+    "diff_wins": 0.041721232932698075,
+    "diff_current_win_streak": 0.033060951903587675,
+    "diff_recent_form": 0.02481281403108724
   }
 }
