@@ -601,8 +601,8 @@ def build_diffs(rs, bs):
 # ─────────────────────────────────────────────────────────────
 def why_explanation(diffs, features, red_name, blue_name, pred, model_name):
     """Zeigt Feature-Beiträge + Textbegründung."""
-    red_advantages  = []
-    blue_advantages = []
+    red_signals  = []
+    blue_signals = []
 
     bars_html = ""
     for feat in features:
@@ -613,10 +613,10 @@ def why_explanation(diffs, features, red_name, blue_name, pred, model_name):
         max_range = max(abs(val), 1)
         pct = min(abs(val) / max_range * 100, 100)
         if val > 0:
-            red_advantages.append(label)
+            red_signals.append(label)
             bar = f'<div class="feat-bar-pos" style="width:{pct}%"></div>'
         elif val < 0:
-            blue_advantages.append(label)
+            blue_signals.append(label)
             bar = f'<div class="feat-bar-neg" style="width:{pct}%"></div>'
         else:
             bar = ""
@@ -635,12 +635,12 @@ def why_explanation(diffs, features, red_name, blue_name, pred, model_name):
     loser_name  = blue_name if pred == 1 else red_name
 
     adv_text = ""
-    if red_advantages:
-        adv_text += f"<b>🔴 {red_name}</b> hat Vorteile in: {', '.join(red_advantages[:4])}. "
-    if blue_advantages:
-        adv_text += f"<b>🔵 {blue_name}</b> hat Vorteile in: {', '.join(blue_advantages[:4])}. "
+    if red_signals:
+        adv_text += f"<b>🔴 {red_name}</b> wird im Modell eher gestützt durch: {', '.join(red_signals[:4])}. "
+    if blue_signals:
+        adv_text += f"<b>🔵 {blue_name}</b> wird im Modell eher gestützt durch: {', '.join(blue_signals[:4])}. "
 
-    adv_feats = red_advantages if pred == 1 else blue_advantages
+    adv_feats = red_signals if pred == 1 else blue_signals
     feat_list = ', '.join(adv_feats[:3]) if adv_feats else 'k.A.'
 
     html = (
@@ -649,11 +649,12 @@ def why_explanation(diffs, features, red_name, blue_name, pred, model_name):
         f'🧠 Warum entschied das Modell für {winner_name}?</div>'
         f'<p style="margin-bottom:10px;">'
         f'Das <b>{model_name}</b> bewertet die Differenz aller Features (Rot minus Blau). '
-        f'Positive Werte (🔴) begünstigen <b>{red_name}</b>, negative (🔵) <b>{blue_name}</b>.</p>'
+        f'Positive Werte (🔴) sprechen im Modell eher für <b>{red_name}</b>, negative (🔵) eher für <b>{blue_name}</b>. '
+        f'Das ist keine allgemeine Aussage wie "älter ist besser", sondern nur die Richtung, die das Modell aus historischen Daten gelernt hat.</p>'
         f'{bars_html}'
         f'<p style="margin-top:12px;">{adv_text}</p>'
         f'<p>Das Modell tippt auf <b>{winner_name}</b>, weil dieser Kämpfer in den entscheidenden '
-        f'Features (<i>{feat_list}</i>) klare Vorteile zeigt, '
+        f'Features (<i>{feat_list}</i>) die stärkeren modellseitigen Signale zeigt, '
         f'die historisch am stärksten mit einem Sieg korrelieren.</p>'
         '</div>'
     )
