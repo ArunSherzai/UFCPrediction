@@ -1,0 +1,56 @@
+{
+  "dataset": {
+    "rows": 8427,
+    "columns": 134,
+    "source_max_event_date": "2026-03-21"
+  },
+  "winner_baseline": {
+    "accuracy": 0.6047477744807122,
+    "balanced_accuracy": 0.6064314314314314,
+    "roc_auc": 0.6565815815815815,
+    "majority_class_accuracy": 0.5608308605341247,
+    "majority_class_balanced_accuracy": 0.5,
+    "train_rows": 6742,
+    "test_rows": 1685
+  },
+  "winner_advanced": {
+    "accuracy": 0.6201780415430267,
+    "balanced_accuracy": 0.6028921778921779,
+    "roc_auc": 0.6458229658229659,
+    "majority_class_accuracy": 0.5608308605341247,
+    "majority_class_balanced_accuracy": 0.5,
+    "train_rows": 6742,
+    "test_rows": 1685
+  },
+  "recommended_winner_model": "winner_baseline",
+  "round_model": {
+    "accuracy": 0.4540059347181009,
+    "balanced_accuracy": 0.25482524542307167,
+    "mae": 0.943026706231454,
+    "train_rows": 6742,
+    "test_rows": 1685
+  },
+  "method_model": {
+    "accuracy": 0.4386904761904762,
+    "balanced_accuracy": 0.3601712279806844,
+    "train_rows": 6723,
+    "test_rows": 1680
+  },
+  "advanced_feature_importances": {
+    "diff_age": 0.16356453780928207,
+    "diff_total_rounds_fought": 0.09071426888845546,
+    "diff_avg_CTRL_time": 0.08478842492006435,
+    "diff_reach": 0.07458601578327141,
+    "diff_avg_KD": 0.07329772607361762,
+    "diff_avg_SIG_STR_landed": 0.06698420351448947,
+    "diff_total_time_fought": 0.06614916560050461,
+    "diff_td_defense_proxy": 0.06257896133093062,
+    "diff_sig_str_defense_proxy": 0.05992650361200088,
+    "diff_avg_TD_landed": 0.05862031842504577,
+    "diff_avg_SUB_ATT": 0.04991361788582164,
+    "diff_height": 0.049574226777643074,
+    "diff_wins": 0.04171520500622475,
+    "diff_current_win_streak": 0.03303968833556807,
+    "diff_recent_form": 0.024547136037080138
+  }
+}

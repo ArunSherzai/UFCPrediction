@@ -1,253 +1,139 @@
-import pandas as pd
-import numpy as np
-import pickle
 import os
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-import warnings
-warnings.filterwarnings('ignore')  # Um FutureWarnings von sklearn zu unterdrücken
+import pandas as pd
+
+from model_utils import (
+    DEFAULT_MODEL_PATHS,
+    WINNER_BASE_FEATURES,
+    WINNER_ADVANCED_FEATURES,
+    load_artifact,
+    load_clean_data,
+    load_model_summary,
+    train_all_models,
+)
 
 
-# ──────────────────────────────────────────────
-# HILFSFUNKTIONEN
-# ──────────────────────────────────────────────
-
-def load_data(data_path="../data/cleaned_ufc_data.csv"):
-    try:
-        df = pd.read_csv(data_path)
-        return df
-    except FileNotFoundError:
-        print(f"❌ Datei {data_path} nicht gefunden. Bitte zuerst dataCleaning.py ausführen.")
+def build_latest_stats(df, fighter_name):
+    fights = df[(df["R_fighter"] == fighter_name) | (df["B_fighter"] == fighter_name)].sort_values("date")
+    if fights.empty:
         return None
 
-
-def format_finish(row):
-    """Gibt einen lesbaren String für Siegmethode + Runde zurück."""
-    method = row.get('finish_method', None)
-    runde = row.get('finish_round', None)
-
-    parts = []
-    if pd.notna(method) and str(method).strip() not in ('', 'nan'):
-        parts.append(str(method).strip())
-    if pd.notna(runde):
-        parts.append(f"Runde {int(runde)}")
-
-    return " | ".join(parts) if parts else "k.A."
-
-
-# ──────────────────────────────────────────────
-# MODELL: SIEGER-VORHERSAGE (Baseline)
-# ──────────────────────────────────────────────
-
-WIN_FEATURES = ['diff_recent_form', 'diff_wins', 'diff_current_win_streak', 'diff_age']
-
-
-def build_winner_model(df):
-    target = 'target'
-    df_model = df.dropna(subset=WIN_FEATURES + [target])
-    X = df_model[WIN_FEATURES]
-    y = df_model[target]
-    model = LogisticRegression()
-    model.fit(X, y)
-    return model, df_model
+    row = fights.iloc[-1]
+    prefix = "R_" if row["R_fighter"] == fighter_name else "B_"
+    return {
+        "age": row.get(f"{prefix}age"),
+        "wins": row.get(f"{prefix}wins"),
+        "streak": row.get(f"{prefix}current_win_streak"),
+        "form": row.get(f"{prefix}recent_form"),
+        "height": row.get(f"{prefix}Height_cms"),
+        "reach": row.get(f"{prefix}Reach_cms"),
+        "avg_SIG_STR_landed": row.get(f"{prefix}avg_SIG_STR_landed"),
+        "avg_TD_landed": row.get(f"{prefix}avg_TD_landed"),
+        "avg_SUB_ATT": row.get(f"{prefix}avg_SUB_ATT"),
+        "avg_KD": row.get(f"{prefix}avg_KD"),
+        "avg_CTRL_time": row.get(f"{prefix}avg_CTRL_time(seconds)"),
+        "avg_opp_SIG_STR_pct": row.get(f"{prefix}avg_opp_SIG_STR_pct"),
+        "avg_opp_TD_pct": row.get(f"{prefix}avg_opp_TD_pct"),
+        "total_rounds_fought": row.get(f"{prefix}total_rounds_fought"),
+        "total_time_fought": row.get(f"{prefix}total_time_fought(seconds)"),
+        "days_since_last_fight": row.get(f"{prefix}days_since_last_fight"),
+    }
 
 
-# ──────────────────────────────────────────────
-# MODELL: RUNDENVORHERSAGE
-# ──────────────────────────────────────────────
-
-ROUND_FEATURES = [
-    'diff_recent_form',
-    'diff_wins',
-    'diff_current_win_streak',
-    'diff_avg_SIG_STR_landed',
-    'diff_avg_TD_landed',
-    'diff_avg_SUB_ATT',
-    'diff_avg_KD',
-    'diff_avg_CTRL_time',
-]
-
-
-def build_round_model(df, model_type='separate'):
-    """
-    Baut ein Modell zur Vorhersage der Kampfrunde (finish_round).
-
-    model_type:
-        'separate'  – Eigenes RandomForest-Modell nur für die Runde
-        'combined'  – Nutzt Sieger-Features (4 Features) für die Runde
-    """
-    if 'finish_round' not in df.columns:
-        print("⚠️ Spalte 'finish_round' nicht im Datensatz vorhanden.")
-        return None, None, None
-
-    target_round = 'finish_round'
-
-    if model_type == 'separate':
-        features = ROUND_FEATURES
-    else:  # combined
-        features = WIN_FEATURES
-
-    df_round = df.dropna(subset=features + [target_round]).copy()
-    df_round[target_round] = df_round[target_round].astype(int)
-
-    if len(df_round) < 50:
-        print("⚠️ Zu wenige Datenpunkte für Rundenvorhersage.")
-        return None, None, None
-
-    X = df_round[features]
-    y = df_round[target_round]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    rf.fit(X_train, y_train)
-
-    preds = rf.predict(X_test)
-    acc = accuracy_score(y_test, preds)
-
-    return rf, features, acc
+def build_diff_frame(red_stats, blue_stats):
+    diffs = {
+        "diff_recent_form": red_stats["form"] - blue_stats["form"],
+        "diff_wins": red_stats["wins"] - blue_stats["wins"],
+        "diff_current_win_streak": red_stats["streak"] - blue_stats["streak"],
+        "diff_age": red_stats["age"] - blue_stats["age"],
+        "diff_height": red_stats["height"] - blue_stats["height"],
+        "diff_reach": red_stats["reach"] - blue_stats["reach"],
+        "diff_avg_SIG_STR_landed": red_stats["avg_SIG_STR_landed"] - blue_stats["avg_SIG_STR_landed"],
+        "diff_avg_TD_landed": red_stats["avg_TD_landed"] - blue_stats["avg_TD_landed"],
+        "diff_avg_SUB_ATT": red_stats["avg_SUB_ATT"] - blue_stats["avg_SUB_ATT"],
+        "diff_avg_KD": red_stats["avg_KD"] - blue_stats["avg_KD"],
+        "diff_avg_CTRL_time": red_stats["avg_CTRL_time"] - blue_stats["avg_CTRL_time"],
+        "diff_sig_str_defense_proxy": blue_stats["avg_opp_SIG_STR_pct"] - red_stats["avg_opp_SIG_STR_pct"],
+        "diff_td_defense_proxy": blue_stats["avg_opp_TD_pct"] - red_stats["avg_opp_TD_pct"],
+        "diff_total_rounds_fought": red_stats["total_rounds_fought"] - blue_stats["total_rounds_fought"],
+        "diff_total_time_fought": red_stats["total_time_fought"] - blue_stats["total_time_fought"],
+        "diff_days_since_last_fight": red_stats["days_since_last_fight"] - blue_stats["days_since_last_fight"],
+    }
+    return pd.DataFrame([diffs])
 
 
-def compare_round_models(df):
-    """Vergleicht separates vs. kombiniertes Rundenvorhersagemodell."""
-    print("\n" + "═"*55)
-    print("  🔬 MODELL-VERGLEICH: Rundenvorhersage")
-    print("═"*55)
-
-    rf_sep, feats_sep, acc_sep = build_round_model(df, model_type='separate')
-    rf_com, feats_com, acc_com = build_round_model(df, model_type='combined')
-
-    if rf_sep is None or rf_com is None:
-        print("❌ Vergleich nicht möglich (zu wenige Daten).")
-        return None, None
-
-    print(f"\n📊 Separates Modell  (erweiterte Features):  Accuracy = {acc_sep*100:.2f}%")
-    print(f"📊 Kombiniertes Modell (Sieger-Features):     Accuracy = {acc_com*100:.2f}%")
-
-    if acc_sep >= acc_com:
-        print(f"\n✅ Empfehlung: Das SEPARATE Modell performt besser (+{(acc_sep-acc_com)*100:.2f}%).")
-        best_rf, best_feats = rf_sep, feats_sep
-    else:
-        print(f"\n✅ Empfehlung: Das KOMBINIERTE Modell performt besser (+{(acc_com-acc_sep)*100:.2f}%).")
-        best_rf, best_feats = rf_com, feats_com
-
-    print("═"*55)
-    return best_rf, best_feats
+def ensure_artifacts():
+    base_dir = os.path.dirname(__file__)
+    model_paths = {
+        key: os.path.join(base_dir, "..", "data", os.path.basename(path))
+        for key, path in DEFAULT_MODEL_PATHS.items()
+    }
+    if not os.path.exists(model_paths["winner_baseline"]) or not os.path.exists(model_paths["winner_advanced"]):
+        train_all_models(output_paths=model_paths)
+    return model_paths
 
 
-# ──────────────────────────────────────────────
-# HAUPTMENÜ
-# ──────────────────────────────────────────────
+def show_summary(summary):
+    print("\n" + "=" * 60)
+    print("MODELLSUMMARY")
+    print("=" * 60)
+    print("Datensatz:", summary.get("dataset"))
+    print("Winner Baseline:", summary.get("winner_baseline"))
+    print("Winner Advanced:", summary.get("winner_advanced"))
+    print("Empfohlen:", summary.get("recommended_winner_model"))
+    if summary.get("round_model"):
+        print("Round Model:", summary["round_model"])
+    if summary.get("method_model"):
+        print("Method Model:", summary["method_model"])
 
-def test_model():
-    print("🚀 Lade Modell und Daten...")
-    df = load_data()
-    if df is None:
+
+def predict_head_to_head(df, baseline_artifact, advanced_artifact):
+    red_name = input("Rote Ecke: ").strip()
+    blue_name = input("Blaue Ecke: ").strip()
+    red_stats = build_latest_stats(df, red_name)
+    blue_stats = build_latest_stats(df, blue_name)
+
+    if not red_stats or not blue_stats:
+        print("Mindestens ein Fighter konnte nicht gefunden werden.")
         return
 
-    winner_model, df_model = build_winner_model(df)
-    print("✅ Sieger-Modell erfolgreich trainiert!\n")
+    X = build_diff_frame(red_stats, blue_stats)
+    predictions = [
+        ("Baseline", baseline_artifact, WINNER_BASE_FEATURES),
+        ("Advanced", advanced_artifact, WINNER_ADVANCED_FEATURES),
+    ]
 
-    # Bestes Rundenmodell (Vergleich beim Start)
-    round_model, round_features = compare_round_models(df)
+    for label, artifact, features in predictions:
+        model = artifact["model"]
+        result = model.predict(X[features])[0]
+        proba = model.predict_proba(X[features])[0]
+        winner = red_name if result == 1 else blue_name
+        print(f"\n{label}: {winner}")
+        print(f"  {red_name}: {proba[1]*100:.1f}%")
+        print(f"  {blue_name}: {proba[0]*100:.1f}%")
+
+
+def test_model():
+    model_paths = ensure_artifacts()
+    df = load_clean_data()
+    baseline_artifact = load_artifact(model_paths["winner_baseline"])
+    advanced_artifact = load_artifact(model_paths["winner_advanced"])
+    summary = load_model_summary()
+    show_summary(summary)
 
     while True:
-        print("\n" + "="*50)
-        print("🥊 UFC VORHERSAGE - TESTMENÜ")
-        print("="*50)
-        print("[1] 3 zufällige historische Kämpfe testen")
-        print("[2] Eigene Werte eingeben (Experimentieren)")
-        print("[3] Modell-Vergleich Rundenvorhersage (erneut)")
-        print("[4] Beenden")
-        print("="*50)
+        print("\n[1] Modellsummary anzeigen")
+        print("[2] Zwei Fighter vergleichen")
+        print("[3] Beenden")
+        choice = input("Auswahl: ").strip()
 
-        choice = input("\nWähle eine Option (1-4): ").strip()
-
-        # ── Option 1: Historische Kämpfe ──────────────────────
-        if choice == '1':
-            required_cols = WIN_FEATURES + ['target', 'R_fighter', 'B_fighter', 'date']
-            sample_df = df_model.dropna(subset=required_cols)
-            sample_fights = sample_df.sample(3)
-
-            for idx, row in sample_fights.iterrows():
-                red   = row['R_fighter']
-                blue  = row['B_fighter']
-                date  = row['date']
-                actual_winner = red if row['target'] == 1 else blue
-
-                X_fight = pd.DataFrame([row[WIN_FEATURES]], columns=WIN_FEATURES)
-
-                prediction    = winner_model.predict(X_fight)[0]
-                probabilities = winner_model.predict_proba(X_fight)[0]
-
-                predicted_winner = red if prediction == 1 else blue
-                prob_red  = probabilities[1] * 100
-                prob_blue = probabilities[0] * 100
-
-                # Runden-Vorhersage (wenn Modell verfügbar)
-                round_pred_str = "k.A."
-                if round_model is not None:
-                    try:
-                        X_round = pd.DataFrame([row[round_features]], columns=round_features)
-                        predicted_round = round_model.predict(X_round)[0]
-                        round_pred_str = f"Runde {int(predicted_round)}"
-                    except Exception:
-                        pass
-
-                # Echter Ausgang
-                finish_str = format_finish(row)
-
-                print(f"\n📅 Datum:            {date}")
-                print(f"🥋 Kampf:            {red} (Red) vs. {blue} (Blue)")
-                print(f"🤖 Modell-Tipp:      {predicted_winner}")
-                print(f"📊 Wahrscheinlichkeit: {red} ({prob_red:.1f}%) | {blue} ({prob_blue:.1f}%)")
-                print(f"🔢 Runden-Vorhersage: {round_pred_str}")
-                print(f"📋 Echter Ausgang:   {actual_winner}  [{finish_str}]", end="  ")
-
-                if predicted_winner == actual_winner:
-                    print("✅ Richtig!")
-                else:
-                    print("❌ Falsch!")
-
-            print()
-
-        # ── Option 2: Eigene Werte ────────────────────────────
-        elif choice == '2':
-            print("\nGib die Differenz-Werte (Team Rot minus Team Blau) ein.")
-            print("Beispiel: Wenn Red 30 Jahre alt und Blue 28 → tipp '2' ein.")
-            try:
-                form_diff   = float(input("\n1. Form-Differenz (-1.0 bis 1.0): "))
-                win_diff    = float(input("2. Differenz der Siege: "))
-                streak_diff = float(input("3. Differenz der Siegesserie: "))
-                age_diff    = float(input("4. Altersunterschied in Jahren: "))
-
-                X_custom = pd.DataFrame(
-                    [[form_diff, win_diff, streak_diff, age_diff]],
-                    columns=WIN_FEATURES
-                )
-                pred  = winner_model.predict(X_custom)[0]
-                probs = winner_model.predict_proba(X_custom)[0]
-
-                winner = "Red" if pred == 1 else "Blue"
-                print(f"\n🤖 Das Modell tippt auf: => {winner} <=")
-                print(f"📊 Wahrscheinlichkeit Red: {probs[1]*100:.1f}% | Blue: {probs[0]*100:.1f}%\n")
-
-            except ValueError:
-                print("\n❌ Ungültige Eingabe! Bitte nur Zahlen eingeben (Punkt statt Komma, z.B. '0.5').\n")
-
-        # ── Option 3: Modell-Vergleich ────────────────────────
-        elif choice == '3':
-            round_model, round_features = compare_round_models(df)
-
-        # ── Option 4: Beenden ─────────────────────────────────
-        elif choice == '4':
-            print("👋 Bis zum nächsten Mal!")
+        if choice == "1":
+            show_summary(summary)
+        elif choice == "2":
+            predict_head_to_head(df, baseline_artifact, advanced_artifact)
+        elif choice == "3":
             break
-
         else:
-            print("❌ Ungültige Auswahl. Bitte 1, 2, 3 oder 4 eintippen.\n")
+            print("Ungültige Auswahl.")
 
 
 if __name__ == "__main__":

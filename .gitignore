@@ -1,0 +1,3 @@
+script/__pycache__/
+data/new_fights_cache.csv
+data/new_fights_progress.json

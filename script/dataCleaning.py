@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import json
 
 
 def clean_and_prepare_data():
@@ -15,6 +16,7 @@ def clean_and_prepare_data():
     MAIN_FILE = "../data/data.csv"
     RAW_FIGHT_FILE = "../data/raw_total_fight_data.csv"
     OUTPUT_FILE = "../data/cleaned_ufc_data.csv"
+    METADATA_FILE = "../data/dataset_metadata.json"
 
     if not os.path.exists(MAIN_FILE):
         print(f"❌ Fehler: '{MAIN_FILE}' nicht gefunden!")
@@ -32,14 +34,20 @@ def clean_and_prepare_data():
         # Merge: Wir matchen über Kämpfer-Namen und Datum
         # Datumsformate angleichen (raw: "March 20, 2021" → data: "2021-03-20")
         if 'win_by' in raw.columns:
-            raw_subset = raw[['R_fighter', 'B_fighter', 'date', 'win_by']].copy()
+            raw_columns = ['R_fighter', 'B_fighter', 'date', 'win_by']
+            if 'last_round' in raw.columns:
+                raw_columns.append('last_round')
+
+            raw_subset = raw[raw_columns].copy()
             raw_subset['date'] = pd.to_datetime(raw_subset['date'], format='mixed', dayfirst=False).dt.strftime('%Y-%m-%d')
-            raw_subset = raw_subset.rename(columns={'win_by': 'finish_method'})
+            raw_subset = raw_subset.rename(columns={'win_by': 'finish_method', 'last_round': 'finish_round'})
             # Duplikate entfernen (mehrere Runden pro Kampf im raw file)
             raw_subset = raw_subset.drop_duplicates(subset=['R_fighter', 'B_fighter', 'date'])
             df = df.merge(raw_subset, on=['R_fighter', 'B_fighter', 'date'], how='left')
             df = df.copy()  # DataFrame defragmentieren (PerformanceWarning vermeiden)
             print(f"✅ Siegmethode (finish_method) gemergt: {df['finish_method'].notna().sum()} Einträge.")
+            if 'finish_round' in df.columns:
+                print(f"✅ Finish-Runde (finish_round) gemergt: {df['finish_round'].notna().sum()} Einträge.")
     else:
         print(f"⚠️ '{RAW_FIGHT_FILE}' nicht gefunden – finish_method wird übersprungen.")
 
@@ -80,6 +88,8 @@ def clean_and_prepare_data():
         'diff_losses':            ('R_losses',                   'B_losses'),
         'diff_current_win_streak':('R_current_win_streak',       'B_current_win_streak'),
         'diff_longest_win_streak':('R_longest_win_streak',       'B_longest_win_streak'),
+        'diff_total_rounds_fought':('R_total_rounds_fought',     'B_total_rounds_fought'),
+        'diff_total_time_fought':   ('R_total_time_fought(seconds)', 'B_total_time_fought(seconds)'),
     }
 
     created_diffs = []
@@ -147,6 +157,48 @@ def clean_and_prepare_data():
     print(f"✅ Rolling Averages berechnet (letzte 3 Kämpfe): {form_filled}/{len(df)} Kämpfer haben Form-Daten.")
 
     # ========================================================
+    # 5b. Zusätzliche moderne Features
+    # ========================================================
+    # Defensive Proxys: niedrigere gegnerische Treffer-/TD-Quote ist besser.
+    if {'R_avg_opp_SIG_STR_pct', 'B_avg_opp_SIG_STR_pct'}.issubset(df.columns):
+        df['R_sig_str_defense_proxy'] = -df['R_avg_opp_SIG_STR_pct']
+        df['B_sig_str_defense_proxy'] = -df['B_avg_opp_SIG_STR_pct']
+        df['diff_sig_str_defense_proxy'] = df['B_avg_opp_SIG_STR_pct'] - df['R_avg_opp_SIG_STR_pct']
+
+    if {'R_avg_opp_TD_pct', 'B_avg_opp_TD_pct'}.issubset(df.columns):
+        df['R_td_defense_proxy'] = -df['R_avg_opp_TD_pct']
+        df['B_td_defense_proxy'] = -df['B_avg_opp_TD_pct']
+        df['diff_td_defense_proxy'] = df['B_avg_opp_TD_pct'] - df['R_avg_opp_TD_pct']
+
+    # Inaktivität: Tage seit dem vorherigen Kampf je Kämpfer.
+    def compute_days_since_last(df_local, fighter_col):
+        output = pd.Series(np.nan, index=df_local.index, dtype=float)
+        fighters = df_local[fighter_col].dropna().unique()
+
+        for fighter in fighters:
+            mask = (df_local['R_fighter'] == fighter) | (df_local['B_fighter'] == fighter)
+            fighter_fights = df_local.loc[mask].sort_values('date')
+            if fighter_fights.empty:
+                continue
+
+            previous_dates = fighter_fights['date'].shift(1)
+            days_since = (fighter_fights['date'] - previous_dates).dt.days.astype(float)
+            current_side_idx = fighter_fights.index[fighter_fights[fighter_col] == fighter]
+            output.loc[current_side_idx] = days_since.loc[current_side_idx]
+
+        return output
+
+    df['R_days_since_last_fight'] = compute_days_since_last(df, 'R_fighter')
+    df['B_days_since_last_fight'] = compute_days_since_last(df, 'B_fighter')
+    df['diff_days_since_last_fight'] = df['R_days_since_last_fight'] - df['B_days_since_last_fight']
+
+    # Historien-Flags helfen bei späterer Analyse von frühen Karrierekämpfen.
+    if {'R_wins', 'R_losses', 'R_draw', 'B_wins', 'B_losses', 'B_draw'}.issubset(df.columns):
+        df['R_has_history'] = ((df['R_wins'].fillna(0) + df['R_losses'].fillna(0) + df['R_draw'].fillna(0)) > 0).astype(int)
+        df['B_has_history'] = ((df['B_wins'].fillna(0) + df['B_losses'].fillna(0) + df['B_draw'].fillna(0)) > 0).astype(int)
+        df['diff_has_history'] = df['R_has_history'] - df['B_has_history']
+
+    # ========================================================
     # 6. WOCHE 2 – LABEL ENCODING (Kategorien → Zahlen)
     # ========================================================
     # a) finish_method / win_by encodieren
@@ -195,11 +247,23 @@ def clean_and_prepare_data():
     # 7. SPEICHERN
     # ========================================================
     df.to_csv(OUTPUT_FILE, index=False)
+
+    metadata = {
+        'rows': int(len(df)),
+        'columns': int(len(df.columns)),
+        'source_max_event_date': df['date'].max().strftime('%Y-%m-%d') if df['date'].notna().any() else None,
+        'finish_method_non_null': int(df['finish_method'].notna().sum()) if 'finish_method' in df.columns else 0,
+        'finish_round_non_null': int(df['finish_round'].notna().sum()) if 'finish_round' in df.columns else 0,
+    }
+    with open(METADATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=True, indent=2)
+
     print(f"\n{'='*50}")
     print(f"--- ERGEBNIS WOCHE 1 + 2 ---")
     print(f"Datei erstellt: {OUTPUT_FILE}")
     print(f"Kämpfe: {len(df)}")
     print(f"Spalten insgesamt: {len(df.columns)}")
+    print(f"Metadaten: {METADATA_FILE}")
 
     # Übersicht der neuen Features
     new_cols = [c for c in df.columns if c.startswith('diff_') or 'form' in c.lower() or 'encoded' in c.lower()]

@@ -2,16 +2,22 @@ import streamlit as st
 import json
 import pandas as pd
 import numpy as np
-import pickle
 import os
 import time
 import warnings
 warnings.filterwarnings('ignore')
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from model_utils import (
+    DEFAULT_MODEL_PATHS,
+    METHOD_FEATURES,
+    ROUND_FEATURES,
+    WINNER_ADVANCED_FEATURES,
+    WINNER_BASE_FEATURES,
+    load_artifact,
+    load_clean_data,
+    load_model_summary,
+    train_all_models,
+)
 
 st.set_page_config(page_title="UFC Fight Predictor", page_icon="🥊", layout="wide")
 
@@ -92,19 +98,8 @@ PLACEHOLDER_IMG = os.path.join(
 # ─────────────────────────────────────────────────────────────
 # MODELL-FEATURES
 # ─────────────────────────────────────────────────────────────
-BASE_FEATURES = ['diff_recent_form', 'diff_wins', 'diff_current_win_streak', 'diff_age']
-ADV_FEATURES  = [
-    'diff_recent_form', 'diff_wins', 'diff_current_win_streak',
-    'diff_height', 'diff_reach',
-    'diff_avg_SIG_STR_landed', 'diff_avg_TD_landed',
-    'diff_avg_SUB_ATT', 'diff_avg_KD', 'diff_avg_CTRL_time'
-]
-ROUND_FEATURES = [
-    'diff_recent_form', 'diff_wins', 'diff_current_win_streak',
-    'diff_avg_SIG_STR_landed', 'diff_avg_TD_landed',
-    'diff_avg_SUB_ATT', 'diff_avg_KD', 'diff_avg_CTRL_time'
-]
-METHOD_FEATURES = ROUND_FEATURES  # gleiche Features für Methoden-Vorhersage
+BASE_FEATURES = WINNER_BASE_FEATURES
+ADV_FEATURES = WINNER_ADVANCED_FEATURES
 TARGET = 'target'
 ROUND_TARGET  = 'finish_round'
 METHOD_TARGET = 'finish_method'
@@ -121,6 +116,11 @@ FEATURE_LABELS = {
     'diff_avg_SUB_ATT':         'Ø Submission-Versuche',
     'diff_avg_KD':              'Ø Knockdowns',
     'diff_avg_CTRL_time':       'Ø Bodenkontrolle (s)',
+    'diff_sig_str_defense_proxy': 'Striking-Defense-Proxy',
+    'diff_td_defense_proxy':    'Takedown-Defense-Proxy',
+    'diff_total_rounds_fought': 'Erfahrung in Runden',
+    'diff_total_time_fought':   'Gesamtkampfzeit',
+    'diff_days_since_last_fight': 'Inaktivität seit letztem Kampf',
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -130,73 +130,24 @@ FEATURE_LABELS = {
 def load_everything():
     base_dir = os.path.dirname(__file__)
     data_path = os.path.join(base_dir, "..", "data", "cleaned_ufc_data.csv")
-    df = pd.read_csv(data_path)
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df = load_clean_data(data_path)
 
-    # ── Sieger-Modelle ────────────────────────────────────────
-    all_feat = list(set(BASE_FEATURES + ADV_FEATURES + [TARGET]))
-    df_model = df.dropna(subset=all_feat).copy()
+    model_paths = {
+        key: os.path.join(base_dir, "..", "data", os.path.basename(path))
+        for key, path in DEFAULT_MODEL_PATHS.items()
+    }
+    summary_path = os.path.join(base_dir, "..", "data", "model_summary.json")
 
-    X_base = df_model[BASE_FEATURES]
-    X_adv  = df_model[ADV_FEATURES]
-    y      = df_model[TARGET]
+    if not all(os.path.exists(path) for path in model_paths.values() if "method" not in path and "round" not in path):
+        train_all_models(data_path=data_path, output_paths=model_paths)
 
-    X_tr_b, X_te_b, y_tr, y_te = train_test_split(X_base, y, test_size=0.2, random_state=42)
-    X_tr_a, X_te_a, _,    _    = train_test_split(X_adv,  y, test_size=0.2, random_state=42)
+    baseline_artifact = load_artifact(model_paths["winner_baseline"])
+    advanced_artifact = load_artifact(model_paths["winner_advanced"])
+    round_artifact = load_artifact(model_paths["fight_round"]) if os.path.exists(model_paths["fight_round"]) else None
+    method_artifact = load_artifact(model_paths["fight_method"]) if os.path.exists(model_paths["fight_method"]) else None
+    summary = load_model_summary(summary_path)
 
-    # Versuche pickle-Modelle zu laden
-    base_pkl = os.path.join(base_dir, "..", "data", "baseline_model.pkl")
-    adv_pkl  = os.path.join(base_dir, "..", "data", "advanced_model.pkl")
-
-    if os.path.exists(base_pkl):
-        with open(base_pkl, "rb") as f:
-            baseline_model = pickle.load(f)
-    else:
-        baseline_model = LogisticRegression(max_iter=1000)
-        baseline_model.fit(X_tr_b, y_tr)
-
-    if os.path.exists(adv_pkl):
-        with open(adv_pkl, "rb") as f:
-            advanced_model = pickle.load(f)
-    else:
-        advanced_model = RandomForestClassifier(n_estimators=100, random_state=42)
-        advanced_model.fit(X_tr_a, y_tr)
-
-    acc_base = accuracy_score(y_te, baseline_model.predict(X_te_b))
-    acc_adv  = accuracy_score(y_te, advanced_model.predict(X_te_a))
-
-    # ── Rundenmodell ──────────────────────────────────────────
-    round_model = None; round_model_feats = ROUND_FEATURES
-    if ROUND_TARGET in df.columns:
-        df_r = df.dropna(subset=ROUND_FEATURES + [ROUND_TARGET]).copy()
-        df_r[ROUND_TARGET] = df_r[ROUND_TARGET].astype(int)
-        if len(df_r) >= 50:
-            Xr = df_r[ROUND_FEATURES]; yr = df_r[ROUND_TARGET]
-            Xr_tr, Xr_te, yr_tr, yr_te = train_test_split(Xr, yr, test_size=0.2, random_state=42)
-            round_model = RandomForestClassifier(n_estimators=100, random_state=42)
-            round_model.fit(Xr_tr, yr_tr)
-
-    # ── Methoden-Modell ───────────────────────────────────────
-    method_model = None; method_classes = []
-    if METHOD_TARGET in df.columns:
-        df_m = df.dropna(subset=METHOD_FEATURES + [METHOD_TARGET]).copy()
-        # Top-Klassen behalten (KO/TKO, Submission, Decision)
-        def simplify(m):
-            if isinstance(m, str):
-                if 'KO' in m or 'TKO' in m: return 'KO / TKO'
-                if 'Sub' in m.lower():       return 'Submission'
-                if 'Decision' in m:          return 'Decision'
-            return 'Other'
-        df_m['finish_simple'] = df_m[METHOD_TARGET].apply(simplify)
-        df_m = df_m[df_m['finish_simple'] != 'Other']
-        if len(df_m) >= 50:
-            Xm = df_m[METHOD_FEATURES]; ym = df_m['finish_simple']
-            Xm_tr, _, ym_tr, _ = train_test_split(Xm, ym, test_size=0.2, random_state=42)
-            method_model = RandomForestClassifier(n_estimators=100, random_state=42)
-            method_model.fit(Xm_tr, ym_tr)
-            method_classes = method_model.classes_.tolist()
-
-    return df, df_model, baseline_model, advanced_model, acc_base, acc_adv, round_model, method_model, method_classes
+    return df, baseline_artifact, advanced_artifact, round_artifact, method_artifact, summary
 
 
 @st.cache_data
@@ -226,6 +177,11 @@ def get_stats(df, name):
         'avg_SUB_ATT':         row.get(f'{p}avg_SUB_ATT', np.nan),
         'avg_KD':              row.get(f'{p}avg_KD', np.nan),
         'avg_CTRL_time':       row.get(f'{p}avg_CTRL_time(seconds)', np.nan),
+        'avg_opp_SIG_STR_pct': row.get(f'{p}avg_opp_SIG_STR_pct', np.nan),
+        'avg_opp_TD_pct':      row.get(f'{p}avg_opp_TD_pct', np.nan),
+        'total_rounds_fought': row.get(f'{p}total_rounds_fought', np.nan),
+        'total_time_fought':   row.get(f'{p}total_time_fought(seconds)', np.nan),
+        'days_since_last_fight': row.get(f'{p}days_since_last_fight', np.nan),
     }
 
 
@@ -242,6 +198,8 @@ def safe(v, fmt=".1f", fallback="k.A."):
 def fighter_card(name, stats, corner):
     clr = "red" if corner == "red" else "blue"
     photo_path = FIGHTER_PHOTOS.get(name)
+    if photo_path and not os.path.isabs(photo_path):
+        photo_path = os.path.normpath(os.path.join(os.path.dirname(__file__), photo_path))
     streak     = safe(stats['streak'], "g")
     lng_streak = safe(stats['longest_streak'], "g")
     wins       = safe(stats['wins'], "g")
@@ -272,7 +230,7 @@ def fighter_card(name, stats, corner):
     <div class="fighter-card {clr}-card">
         <div style="font-size:11px;letter-spacing:2px;color:#888;text-transform:uppercase;margin-bottom:4px;">{corner_label}</div>
         <div class="fighter-name">{name}</div>
-        <div style="color:#888;font-size:12px;margin-bottom:10px;">{wins}W – {losses}L</div>
+        <div style="color:#888;font-size:12px;margin-bottom:10px;">UFC Record: {wins}W – {losses}L</div>
         <div class="stat-row"><span class="stat-label">Form (letzte 3)</span><span class="stat-val">{form_pct}</span></div>
         <div class="stat-row"><span class="stat-label">Aktuelle Serie 🔥</span><span class="stat-streak">⚡ {streak} Siege</span></div>
         <div class="stat-row"><span class="stat-label">Längste Serie 🏆</span><span class="stat-streak">🏅 {lng_streak} Siege</span></div>
@@ -303,6 +261,11 @@ def build_diffs(rs, bs):
         'diff_avg_SUB_ATT':        rs['avg_SUB_ATT']       - bs['avg_SUB_ATT'],
         'diff_avg_KD':             rs['avg_KD']            - bs['avg_KD'],
         'diff_avg_CTRL_time':      rs['avg_CTRL_time']     - bs['avg_CTRL_time'],
+        'diff_sig_str_defense_proxy': bs['avg_opp_SIG_STR_pct'] - rs['avg_opp_SIG_STR_pct'],
+        'diff_td_defense_proxy':   bs['avg_opp_TD_pct']    - rs['avg_opp_TD_pct'],
+        'diff_total_rounds_fought': rs['total_rounds_fought'] - bs['total_rounds_fought'],
+        'diff_total_time_fought':  rs['total_time_fought'] - bs['total_time_fought'],
+        'diff_days_since_last_fight': rs['days_since_last_fight'] - bs['days_since_last_fight'],
     }
 
 
@@ -375,30 +338,33 @@ def main():
 
     with st.spinner("⏳ Lade Daten & trainiere Modelle..."):
         try:
-            df, df_model, baseline_model, advanced_model, acc_base, acc_adv, \
-                round_model, method_model, method_classes = load_everything()
+            df, baseline_artifact, advanced_artifact, round_artifact, method_artifact, summary = load_everything()
         except FileNotFoundError as e:
             st.error(f"❌ cleaned_ufc_data.csv nicht gefunden: {e}")
             return
 
     # ── Modellvergleich-Banner ─────────────────────────────────
+    base_metrics = baseline_artifact['metrics']
+    adv_metrics = advanced_artifact['metrics']
+    acc_base = base_metrics['balanced_accuracy']
+    acc_adv = adv_metrics['balanced_accuracy']
     better_model = "Advanced (Random Forest)" if acc_adv >= acc_base else "Baseline (Log. Regression)"
-    better_acc   = max(acc_adv, acc_base)
-    delta        = abs(acc_adv - acc_base) * 100
+    better_acc = max(acc_adv, acc_base)
+    delta = abs(acc_adv - acc_base) * 100
 
     why_better = (
-        f"Der **Random Forest** nutzt {len(ADV_FEATURES)} Features (Strikes, Takedowns, Kontrolle u.a.) "
-        f"und kann nicht-lineare Zusammenhänge erkennen – er ist {delta:.1f}% genauer."
+        f"Der **Random Forest** nutzt {len(ADV_FEATURES)} Features und wird per Zeit-Split bewertet. "
+        f"Er liegt in der Balanced Accuracy um {delta:.1f} Prozentpunkte vorn."
         if acc_adv >= acc_base else
-        f"Die **Logistische Regression** ist trotz weniger Features robuster – sie overfittet weniger "
-        f"und ist auf diesem Datensatz {delta:.1f}% genauer."
+        f"Die **Logistische Regression** ist im Zeit-Split robuster und liegt in der Balanced Accuracy "
+        f"um {delta:.1f} Prozentpunkte vorn."
     )
 
     st.markdown(f"""
     <div class="recommend-box">
         <b>🏆 Modell-Empfehlung (automatisch getestet):</b>
         &nbsp;<span style="color:#00e5ff;font-size:16px;">{better_model}</span>
-        &nbsp;–&nbsp; Accuracy: <b>{better_acc*100:.1f}%</b>
+        &nbsp;–&nbsp; Balanced Accuracy: <b>{better_acc*100:.1f}%</b>
         (Baseline: {acc_base*100:.1f}% | Advanced: {acc_adv*100:.1f}%)<br>
         <span style="font-size:13px;opacity:0.85;">{why_better}</span>
     </div>
@@ -412,8 +378,9 @@ def main():
         horizontal=True
     )
     selected = "Advanced (Random Forest)" if "Advanced" in model_choice else "Baseline (Log. Regression)"
-    model_to_use  = advanced_model  if selected == "Advanced (Random Forest)" else baseline_model
-    feats_to_use  = ADV_FEATURES    if selected == "Advanced (Random Forest)" else BASE_FEATURES
+    winner_artifact = advanced_artifact if selected == "Advanced (Random Forest)" else baseline_artifact
+    model_to_use = winner_artifact['model']
+    feats_to_use = winner_artifact['features']
     model_label   = "Advanced (Random Forest)"   if selected == "Advanced (Random Forest)" else "Baseline (Logistische Regression)"
 
     st.markdown("---")
@@ -452,13 +419,6 @@ def main():
 
         diffs = build_diffs(r_stats, b_stats)
 
-        # NaN-Prüfung für gewählte Features
-        needed_vals = [diffs[f] for f in feats_to_use]
-        if any(pd.isna(v) for v in needed_vals):
-            missing = [FEATURE_LABELS.get(f,f) for f,v in zip(feats_to_use, needed_vals) if pd.isna(v)]
-            st.error(f"Fehlende Daten für: {', '.join(missing)}. Bitte wechsle zum Baseline-Modell.")
-            return
-
         with st.spinner("Modell berechnet…"):
             time.sleep(0.4)
             X_pred = pd.DataFrame([{f: diffs[f] for f in feats_to_use}])
@@ -496,36 +456,33 @@ def main():
         round_col, method_col = st.columns(2)
 
         with round_col:
-            if round_model is not None:
+            if round_artifact is not None:
                 try:
-                    X_round = pd.DataFrame([{f: diffs[f] for f in ROUND_FEATURES}])
-                    if not any(pd.isna(v) for v in X_round.values[0]):
-                        pred_round = round_model.predict(X_round)[0]
-                        round_proba = round_model.predict_proba(X_round)[0]
-                        rounds_conf = dict(zip(round_model.classes_, round_proba))
-                        conf_str = ", ".join([f"R{r}: {p*100:.0f}%" for r,p in sorted(rounds_conf.items())])
-                        st.success(f"🔢 **Wahrscheinlichste Runde:** {int(pred_round)}\n\n_{conf_str}_")
-                    else:
-                        st.info("🔢 Runden-Vorhersage: fehlende Daten")
+                    round_model = round_artifact['model'] if round_artifact else None
+                    X_round = pd.DataFrame([{f: diffs.get(f, np.nan) for f in round_artifact['features']}])
+                    pred_round = round_model.predict(X_round)[0]
+                    round_proba = round_model.predict_proba(X_round)[0]
+                    rounds_conf = dict(zip(round_model.classes_, round_proba))
+                    conf_str = ", ".join([f"R{r}: {p*100:.0f}%" for r,p in sorted(rounds_conf.items())])
+                    st.success(f"🔢 **Wahrscheinlichste Runde:** {int(pred_round)}\n\n_{conf_str}_")
                 except Exception:
                     st.info("🔢 Runden-Vorhersage nicht verfügbar")
             else:
                 st.info("🔢 Runden-Modell nicht trainierbar (fehlende Daten)")
 
         with method_col:
-            if method_model is not None:
+            if method_artifact is not None:
                 try:
-                    X_method = pd.DataFrame([{f: diffs[f] for f in METHOD_FEATURES}])
-                    if not any(pd.isna(v) for v in X_method.values[0]):
-                        pred_method = method_model.predict(X_method)[0]
-                        method_proba = method_model.predict_proba(X_method)[0]
-                        method_conf = dict(zip(method_classes, method_proba))
-                        conf_str = ", ".join([f"{m}: {p*100:.0f}%" for m,p in sorted(method_conf.items(), key=lambda x:-x[1])])
+                    method_model = method_artifact['model'] if method_artifact else None
+                    method_classes = method_model.classes_.tolist() if method_model is not None else []
+                    X_method = pd.DataFrame([{f: diffs.get(f, np.nan) for f in method_artifact['features']}])
+                    pred_method = method_model.predict(X_method)[0]
+                    method_proba = method_model.predict_proba(X_method)[0]
+                    method_conf = dict(zip(method_classes, method_proba))
+                    conf_str = ", ".join([f"{m}: {p*100:.0f}%" for m,p in sorted(method_conf.items(), key=lambda x:-x[1])])
 
-                        emoji = {"KO / TKO": "💥", "Submission": "🤼", "Decision": "📋"}.get(pred_method, "🏆")
-                        st.success(f"{emoji} **Siegmethode:** {pred_method}\n\n_{conf_str}_")
-                    else:
-                        st.info("📋 Methoden-Vorhersage: fehlende Daten")
+                    emoji = {"KO / TKO": "💥", "Submission": "🤼", "Decision": "📋"}.get(pred_method, "🏆")
+                    st.success(f"{emoji} **Siegmethode:** {pred_method}\n\n_{conf_str}_")
                 except Exception:
                     st.info("📋 Methoden-Vorhersage nicht verfügbar")
             else:
@@ -537,11 +494,13 @@ def main():
             why_explanation(diffs, feats_to_use, red_name, blue_name, pred, model_label)
 
         # ── Feature Importance (nur Advanced) ─────────────────
-        base_dir = os.path.dirname(__file__)
-        importance_path = os.path.join(base_dir, "..", "data", "feature_importances.png")
-        if selected == "Advanced (Random Forest)" and os.path.exists(importance_path):
+        if selected == "Advanced (Random Forest)" and summary.get("advanced_feature_importances"):
             with st.expander("📊 Feature Importance des Advanced Modells"):
-                st.image(importance_path, caption="Wichtigkeit der Features für Random Forest", use_container_width=True)
+                importance_df = pd.DataFrame(
+                    list(summary["advanced_feature_importances"].items()),
+                    columns=["Feature", "Importance"]
+                )
+                st.dataframe(importance_df, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
