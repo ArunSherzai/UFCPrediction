@@ -117,4 +117,50 @@ plt.tight_layout()
 plt.savefig("../data/form_streaks_heatmap.png", dpi=150, bbox_inches='tight')
 print("✅ Chart 3 gespeichert: data/form_streaks_heatmap.png")
 
-print("\n📊 Alle 3 Visualisierungen gespeichert in /data/!")
+# ========================================================
+# CHART 4: Das Alters-Paradoxon
+# ========================================================
+try:
+    fig4, ax4 = plt.subplots(figsize=(10, 6))
+    
+    # Gruppiere nach gerundetem Altersunterschied und berechne die Siegwahrscheinlichkeit
+    df_age = df.copy()
+    df_age['diff_age_rounded'] = df_age['diff_age'].round()
+    age_prob = df_age.groupby('diff_age_rounded')['target'].agg(['mean', 'count']).reset_index()
+    
+    # Filtere extreme Ausreißer (z.B. Altersunterschiede mit weniger als 15 Kämpfen)
+    age_prob = age_prob[age_prob['count'] >= 15]
+    
+    # Bubble Chart (Größe der Blase = Anzahl der Kämpfe)
+    scatter = ax4.scatter(age_prob['diff_age_rounded'], age_prob['mean']*100, 
+                          color='#3498db', s=age_prob['count']*0.8, alpha=0.7, 
+                          edgecolor='white', linewidth=0.5,
+                          label='Win % bei exakt X Jahren Unterschied (Größe = Sample Size)')
+    
+    # Polynomische Trendlinie (Grad 3 für glattere Kurve statt harter gerader Linie)
+    z = np.polyfit(age_prob['diff_age_rounded'], age_prob['mean']*100, 3)
+    p = np.poly1d(z)
+    x_smooth = np.linspace(age_prob['diff_age_rounded'].min(), age_prob['diff_age_rounded'].max(), 100)
+    ax4.plot(x_smooth, p(x_smooth), color='#e74c3c', linewidth=2.5, label='Trend (Polynomisch)')
+    
+    ax4.axvline(x=0, color='#2c3e50', linewidth=1.5, linestyle='-')
+    ax4.axhline(y=50, color='gray', linewidth=1, linestyle='--', alpha=0.8)
+    
+    ax4.set_xlabel('Altersunterschied in Jahren (Positiv = Roter Kämpfer ist älter)', fontsize=12)
+    ax4.set_ylabel('Siegwahrscheinlichkeit (Rote Ecke) in %', fontsize=12)
+    ax4.set_title('Das Alters-Paradoxon: MMA ist "A Young Man\'s Game"', fontsize=14, fontweight='bold')
+    
+    # Text-Annotationen zur Erklärung
+    ax4.text(-8, 65, 'Rot ist jünger\nhöhere Gewinnchance!', fontsize=10, color='#2ecc71', fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8, edgecolor='#2ecc71'))
+    ax4.text(8, 35, 'Rot ist älter\ngeringere Gewinnchance!', fontsize=10, color='#e74c3c', fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8, edgecolor='#e74c3c'))
+    
+    ax4.legend(loc='lower left')
+    ax4.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig("../data/alters_paradoxon.png", dpi=150, bbox_inches='tight')
+    print("✅ Chart 4 gespeichert: data/alters_paradoxon.png")
+except Exception as e:
+    print(f"❌ Fehler bei Chart 4: {e}")
+
+print("\n📊 Alle 4 Visualisierungen gespeichert in /data/!")
