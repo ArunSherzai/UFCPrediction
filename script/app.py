@@ -5,6 +5,7 @@ import numpy as np
 import os
 import time
 import warnings
+from datetime import date
 warnings.filterwarnings('ignore')
 
 from model_utils import (
@@ -76,6 +77,157 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .feat-bar-pos { height: 100%; background: #ff4b4b; border-radius: 6px; }
 .feat-bar-neg { height: 100%; background: #4b8bff; border-radius: 6px; margin-left: auto; }
 .feat-val { width: 60px; text-align: right; color: #ccc; font-weight: 600; }
+
+.matchup-shell {
+    margin: 10px 0 18px 0;
+    padding: 18px;
+    border-radius: 22px;
+    background: linear-gradient(160deg, #101625, #121a2f 52%, #0f1424);
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.28);
+}
+.fighter-panel {
+    border-radius: 18px;
+    padding: 18px;
+    min-height: 150px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.red-panel { box-shadow: inset 0 0 0 1px rgba(255,75,75,0.18); }
+.blue-panel { box-shadow: inset 0 0 0 1px rgba(75,139,255,0.18); }
+.corner-chip {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: #8d99ae;
+    margin-bottom: 6px;
+}
+.panel-name {
+    font-size: 28px;
+    font-weight: 900;
+    line-height: 1.05;
+    margin-bottom: 6px;
+}
+.red-panel .panel-name { color: #ff6b6b; }
+.blue-panel .panel-name { color: #6ea8ff; }
+.panel-record {
+    color: #c8d1e8;
+    font-size: 13px;
+    margin-bottom: 10px;
+}
+.panel-finish {
+    margin-bottom: 14px;
+    color: #f4d58d;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.panel-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.panel-badge {
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.05);
+    color: #dbe4ff;
+    font-size: 12px;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.vs-core {
+    height: 100%;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    background: radial-gradient(circle at top, rgba(255,255,255,0.08), transparent 55%), linear-gradient(180deg, #17142c, #111827);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.vs-badge {
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-weight: 900;
+    color: #fff;
+    background: linear-gradient(135deg, #ff4b4b, #5f8fff);
+    box-shadow: 0 10px 30px rgba(79,104,255,0.30);
+    margin-bottom: 12px;
+}
+.vs-caption {
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: #97a3bf;
+    text-transform: uppercase;
+}
+.tape-card {
+    margin-top: 14px;
+    padding: 18px 20px 10px 20px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.tape-title {
+    text-align: center;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #97a3bf;
+    margin-bottom: 12px;
+}
+.tape-row {
+    display: grid;
+    grid-template-columns: 88px 1fr 130px 1fr 88px;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.tape-row:first-of-type { border-top: none; }
+.tape-value-left, .tape-value-right {
+    font-weight: 700;
+    color: #edf2ff;
+    font-size: 14px;
+}
+.tape-value-left { text-align: right; }
+.tape-value-right { text-align: left; }
+.tape-adv-left { color: #ff8585; }
+.tape-adv-right { color: #7fb0ff; }
+.tape-label {
+    text-align: center;
+    color: #9aa6c4;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.tape-bar {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+.tape-fill-red, .tape-fill-blue {
+    position: absolute;
+    top: 0;
+    height: 100%;
+}
+.tape-fill-red {
+    right: 0;
+    background: linear-gradient(90deg, rgba(255,75,75,0.25), #ff4b4b);
+}
+.tape-fill-blue {
+    left: 0;
+    background: linear-gradient(90deg, #4b8bff, rgba(75,139,255,0.25));
+}
+.tape-label-adv-left { color: #ff8585; font-weight: 700; }
+.tape-label-adv-right { color: #7fb0ff; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -120,7 +272,7 @@ FEATURE_LABELS = {
     'diff_td_defense_proxy':    'Takedown-Defense-Proxy',
     'diff_total_rounds_fought': 'Erfahrung in Runden',
     'diff_total_time_fought':   'Gesamtkampfzeit',
-    'diff_days_since_last_fight': 'Inaktivität seit letztem Kampf',
+    'diff_days_since_last_fight': 'Inaktivität bis zum Stichtag',
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -156,19 +308,67 @@ def get_fighters(df):
     return sorted(fighters)
 
 
-def get_stats(df, name):
-    fights = df[(df['R_fighter'] == name) | (df['B_fighter'] == name)].sort_values('date')
+def get_stats(df, name, reference_date=None):
+    fights = df[(df['R_fighter'] == name) | (df['B_fighter'] == name)].copy()
+    fights['date'] = pd.to_datetime(fights['date'])
+    if reference_date is not None:
+        ref_ts = pd.Timestamp(reference_date)
+        fights = fights[fights['date'] <= ref_ts]
+    fights = fights.sort_values('date')
     if fights.empty:
         return None
     row = fights.iloc[-1]
     side = 'R_' if row['R_fighter'] == name else 'B_'
     p = side
+
+    # Die CSV enthält Pre-Fight-Stats (VOR dem letzten Kampf).
+    # Wir korrigieren Wins/Losses/Streak auf den Post-Fight-Stand.
+    winner = row.get('Winner')
+    won_last = (winner == 'Red' and side == 'R_') or (winner == 'Blue' and side == 'B_')
+
+    pre_wins   = row.get(f'{p}wins', np.nan)
+    pre_losses = row.get(f'{p}losses', np.nan)
+    pre_streak = row.get(f'{p}current_win_streak', np.nan)
+    pre_longest = row.get(f'{p}longest_win_streak', np.nan)
+    pre_ko_wins = row.get(f'{p}win_by_KO/TKO', np.nan)
+    pre_sub_wins = row.get(f'{p}win_by_Submission', np.nan)
+    pre_doc_wins = row.get(f'{p}win_by_TKO_Doctor_Stoppage', np.nan)
+    finish_method = str(row.get('finish_method', '')).strip()
+
+    if won_last:
+        wins   = pre_wins + 1   if pd.notna(pre_wins)   else np.nan
+        losses = pre_losses      if pd.notna(pre_losses) else np.nan
+        streak = pre_streak + 1  if pd.notna(pre_streak) else np.nan
+        longest = max(pre_longest, streak) if pd.notna(pre_longest) and pd.notna(streak) else pre_longest
+        ko_wins = pre_ko_wins + 1 if pd.notna(pre_ko_wins) and finish_method == 'KO/TKO' else pre_ko_wins
+        sub_wins = pre_sub_wins + 1 if pd.notna(pre_sub_wins) and finish_method == 'Submission' else pre_sub_wins
+        doc_wins = pre_doc_wins + 1 if pd.notna(pre_doc_wins) and finish_method == 'TKO - Doctor\'s Stoppage' else pre_doc_wins
+    else:
+        wins   = pre_wins        if pd.notna(pre_wins)   else np.nan
+        losses = pre_losses + 1  if pd.notna(pre_losses) else np.nan
+        streak = 0
+        longest = pre_longest
+        ko_wins = pre_ko_wins
+        sub_wins = pre_sub_wins
+        doc_wins = pre_doc_wins
+
+    total_finishes = (
+        (ko_wins if pd.notna(ko_wins) else 0)
+        + (sub_wins if pd.notna(sub_wins) else 0)
+        + (doc_wins if pd.notna(doc_wins) else 0)
+    )
+    finish_rate = (total_finishes / wins) if pd.notna(wins) and wins > 0 else np.nan
+    if reference_date is not None:
+        days_since_last_fight = max((pd.Timestamp(reference_date) - row['date']).days, 0)
+    else:
+        days_since_last_fight = row.get(f'{p}days_since_last_fight', np.nan)
+
     return {
         'age':                 row.get(f'{p}age', np.nan),
-        'wins':                row.get(f'{p}wins', np.nan),
-        'losses':              row.get(f'{p}losses', np.nan),
-        'streak':              row.get(f'{p}current_win_streak', np.nan),
-        'longest_streak':      row.get(f'{p}longest_win_streak', np.nan),
+        'wins':                wins,
+        'losses':              losses,
+        'streak':              streak,
+        'longest_streak':      longest,
         'form':                row.get(f'{p}recent_form', np.nan),
         'height':              row.get(f'{p}Height_cms', np.nan),
         'reach':               row.get(f'{p}Reach_cms', np.nan),
@@ -181,7 +381,10 @@ def get_stats(df, name):
         'avg_opp_TD_pct':      row.get(f'{p}avg_opp_TD_pct', np.nan),
         'total_rounds_fought': row.get(f'{p}total_rounds_fought', np.nan),
         'total_time_fought':   row.get(f'{p}total_time_fought(seconds)', np.nan),
-        'days_since_last_fight': row.get(f'{p}days_since_last_fight', np.nan),
+        'days_since_last_fight': days_since_last_fight,
+        'ko_wins':             ko_wins,
+        'sub_wins':            sub_wins,
+        'finish_rate':         finish_rate,
     }
 
 
@@ -218,7 +421,7 @@ def fighter_card(name, stats, corner):
 
     # Foto anzeigen (lokal via st.image, kein HTML nötig)
     if photo_path and os.path.exists(photo_path):
-        st.image(photo_path, use_container_width=True)
+        st.image(photo_path, width=200)
     else:
         st.markdown(
             f'<div style="height:160px;display:flex;align-items:center;justify-content:center;'
@@ -243,6 +446,130 @@ def fighter_card(name, stats, corner):
         <div class="stat-row"><span class="stat-label">Ø Bodenkontrolle (s)</span><span class="stat-val">{ctrl}</span></div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def get_photo_path(name):
+    photo_path = FIGHTER_PHOTOS.get(name)
+    if photo_path and not os.path.isabs(photo_path):
+        photo_path = os.path.normpath(os.path.join(os.path.dirname(__file__), photo_path))
+    return photo_path
+
+
+def fighter_headshot(name):
+    photo_path = get_photo_path(name)
+    if photo_path and os.path.exists(photo_path):
+        st.image(photo_path, width=120)
+    else:
+        st.markdown(
+            '<div style="height:120px;width:120px;display:flex;align-items:center;justify-content:center;'
+            'background:#1a1a2e;border-radius:16px;color:#555;font-size:34px;margin:0 auto;">🥊</div>',
+            unsafe_allow_html=True
+        )
+
+
+def fighter_panel(name, stats, corner):
+    panel_cls = "red-panel" if corner == "red" else "blue-panel"
+    corner_label = "Rote Ecke" if corner == "red" else "Blaue Ecke"
+    wins = safe(stats['wins'], "g")
+    losses = safe(stats['losses'], "g")
+    form_pct = f"{float(stats['form'])*100:.0f}%" if pd.notna(stats['form']) else "k.A."
+    streak = safe(stats['streak'], "g")
+    reach = f"{float(stats['reach']):.0f} cm" if pd.notna(stats['reach']) else "k.A."
+    finish_rate = f"{float(stats['finish_rate'])*100:.0f}%" if pd.notna(stats['finish_rate']) else "k.A."
+    ko_wins = safe(stats['ko_wins'], "g")
+    sub_wins = safe(stats['sub_wins'], "g")
+
+    st.markdown(f"""
+    <div class="fighter-panel {panel_cls}">
+        <div class="corner-chip">{corner_label}</div>
+        <div class="panel-name">{name}</div>
+        <div class="panel-record">UFC Record: {wins}W - {losses}L</div>
+        <div class="panel-finish">Finish-Rate: {finish_rate} &nbsp;|&nbsp; KO/TKO: {ko_wins} &nbsp;|&nbsp; Subs: {sub_wins}</div>
+        <div class="panel-badges">
+            <div class="panel-badge">Form: {form_pct}</div>
+            <div class="panel-badge">Serie: {streak}</div>
+            <div class="panel-badge">Reach: {reach}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_tale_of_tape(red_stats, blue_stats):
+    def wins_in_last_three(value):
+        if pd.notna(value):
+            wins = int(round(float(value) * 3))
+            return max(0, min(3, wins))
+        return None
+
+    def metric_row(label, red_raw, blue_raw, red_display, blue_display):
+        left_adv = ""
+        right_adv = ""
+        label_adv = ""
+        if pd.notna(red_raw) and pd.notna(blue_raw):
+            red_value = max(0.0, abs(float(red_raw)))
+            blue_value = max(0.0, abs(float(blue_raw)))
+            total_value = red_value + blue_value
+            if total_value > 0:
+                red_width = red_value / total_value * 100
+                blue_width = blue_value / total_value * 100
+            else:
+                red_width = blue_width = 50.0
+            if float(red_raw) > float(blue_raw):
+                left_adv = " tape-adv-left"
+                label_adv = " tape-label-adv-left"
+            elif float(blue_raw) > float(red_raw):
+                right_adv = " tape-adv-right"
+                label_adv = " tape-label-adv-right"
+        else:
+            red_width = blue_width = 12.0
+
+        return (
+            f'<div class="tape-row">'
+            f'<div class="tape-value-left{left_adv}">{red_display}</div>'
+            f'<div class="tape-bar"><div class="tape-fill-red" style="width:{red_width:.1f}%"></div></div>'
+            f'<div class="tape-label{label_adv}">{label}</div>'
+            f'<div class="tape-bar"><div class="tape-fill-blue" style="width:{blue_width:.1f}%"></div></div>'
+            f'<div class="tape-value-right{right_adv}">{blue_display}</div>'
+            f'</div>'
+        )
+
+    red_recent_wins = wins_in_last_three(red_stats["form"])
+    blue_recent_wins = wins_in_last_three(blue_stats["form"])
+
+    rows = [
+        metric_row("Siege letzte 3 KÃ¤mpfe", red_stats["form"], blue_stats["form"],
+                   f"{red_recent_wins}/3" if red_recent_wins is not None else "k.A.",
+                   f"{blue_recent_wins}/3" if blue_recent_wins is not None else "k.A."),
+        metric_row("Aktuelle Siegesserie", red_stats["streak"], blue_stats["streak"],
+                   safe(red_stats["streak"], "g") + " Siege" if pd.notna(red_stats["streak"]) else "k.A.",
+                   safe(blue_stats["streak"], "g") + " Siege" if pd.notna(blue_stats["streak"]) else "k.A."),
+        metric_row("Größe", red_stats["height"], blue_stats["height"],
+                   f"{float(red_stats['height']):.0f} cm" if pd.notna(red_stats["height"]) else "k.A.",
+                   f"{float(blue_stats['height']):.0f} cm" if pd.notna(blue_stats["height"]) else "k.A."),
+        metric_row("Reichweite", red_stats["reach"], blue_stats["reach"],
+                   f"{float(red_stats['reach']):.0f} cm" if pd.notna(red_stats["reach"]) else "k.A.",
+                   f"{float(blue_stats['reach']):.0f} cm" if pd.notna(blue_stats["reach"]) else "k.A."),
+        metric_row("Significant Strikes / Kampf", red_stats["avg_SIG_STR_landed"], blue_stats["avg_SIG_STR_landed"],
+                   safe(red_stats["avg_SIG_STR_landed"], ".1f") + " / Kampf" if pd.notna(red_stats["avg_SIG_STR_landed"]) else "k.A.",
+                   safe(blue_stats["avg_SIG_STR_landed"], ".1f") + " / Kampf" if pd.notna(blue_stats["avg_SIG_STR_landed"]) else "k.A."),
+        metric_row("Takedowns / Kampf", red_stats["avg_TD_landed"], blue_stats["avg_TD_landed"],
+                   safe(red_stats["avg_TD_landed"], ".1f") + " / Kampf" if pd.notna(red_stats["avg_TD_landed"]) else "k.A.",
+                   safe(blue_stats["avg_TD_landed"], ".1f") + " / Kampf" if pd.notna(blue_stats["avg_TD_landed"]) else "k.A."),
+        metric_row("Submission-Versuche / Kampf", red_stats["avg_SUB_ATT"], blue_stats["avg_SUB_ATT"],
+                   safe(red_stats["avg_SUB_ATT"], ".2f") + " / Kampf" if pd.notna(red_stats["avg_SUB_ATT"]) else "k.A.",
+                   safe(blue_stats["avg_SUB_ATT"], ".2f") + " / Kampf" if pd.notna(blue_stats["avg_SUB_ATT"]) else "k.A."),
+        metric_row("Knockdowns / Kampf", red_stats["avg_KD"], blue_stats["avg_KD"],
+                   safe(red_stats["avg_KD"], ".2f") + " / Kampf" if pd.notna(red_stats["avg_KD"]) else "k.A.",
+                   safe(blue_stats["avg_KD"], ".2f") + " / Kampf" if pd.notna(blue_stats["avg_KD"]) else "k.A."),
+        metric_row("Kontrollzeit / Kampf", red_stats["avg_CTRL_time"], blue_stats["avg_CTRL_time"],
+                   safe(red_stats["avg_CTRL_time"], ".0f") + " s / Kampf" if pd.notna(red_stats["avg_CTRL_time"]) else "k.A.",
+                   safe(blue_stats["avg_CTRL_time"], ".0f") + " s / Kampf" if pd.notna(blue_stats["avg_CTRL_time"]) else "k.A."),
+    ]
+
+    st.markdown(
+        '<div class="tape-card"><div class="tape-title">Tale of the Tape</div>' + "".join(rows) + '</div>',
+        unsafe_allow_html=True
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -294,39 +621,43 @@ def why_explanation(diffs, features, red_name, blue_name, pred, model_name):
         else:
             bar = ""
         display_val = f"{val:+.2f}" if isinstance(val, float) else f"{val:+d}"
+        cls = "feat-pos" if val > 0 else "feat-neg"
 
-        bars_html += f"""
-        <div class="feat-row">
-          <span class="feat-label">{label}</span>
-          <div class="feat-bar-wrap">{bar}</div>
-          <span class="feat-val {'feat-pos' if val>0 else 'feat-neg'}">{display_val}</span>
-        </div>"""
+        bars_html += (
+            f'<div class="feat-row">'
+            f'<span class="feat-label">{label}</span>'
+            f'<div class="feat-bar-wrap">{bar}</div>'
+            f'<span class="feat-val {cls}">{display_val}</span>'
+            f'</div>'
+        )
 
     winner_name = red_name if pred == 1 else blue_name
     loser_name  = blue_name if pred == 1 else red_name
 
     adv_text = ""
     if red_advantages:
-        adv_text += f"**🔴 {red_name}** hat Vorteile in: {', '.join(red_advantages[:4])}. "
+        adv_text += f"<b>🔴 {red_name}</b> hat Vorteile in: {', '.join(red_advantages[:4])}. "
     if blue_advantages:
-        adv_text += f"**🔵 {blue_name}** hat Vorteile in: {', '.join(blue_advantages[:4])}. "
+        adv_text += f"<b>🔵 {blue_name}</b> hat Vorteile in: {', '.join(blue_advantages[:4])}. "
 
-    st.markdown(f"""
-    <div class="why-box">
-        <div style="font-size:16px;font-weight:700;color:#a78bfa;margin-bottom:8px;">
-            🧠 Warum entschied das Modell für {winner_name}?
-        </div>
-        <p style="margin-bottom:10px;">
-            Das <b>{model_name}</b> bewertet die Differenz aller Features (Rot minus Blau).
-            Positive Werte (🔴) begünstigen <b>{red_name}</b>, negative (🔵) <b>{blue_name}</b>.
-        </p>
-        {bars_html}
-        <p style="margin-top:12px;">{adv_text}</p>
-        <p>Das Modell tippt auf <b>{winner_name}</b>, weil dieser Kämpfer in den entscheidenden
-        Features (<i>{', '.join((red_advantages if pred==1 else blue_advantages)[:3])}</i>) klare Vorteile zeigt,
-        die historisch am stärksten mit einem Sieg korrelieren.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    adv_feats = red_advantages if pred == 1 else blue_advantages
+    feat_list = ', '.join(adv_feats[:3]) if adv_feats else 'k.A.'
+
+    html = (
+        '<div class="why-box">'
+        f'<div style="font-size:16px;font-weight:700;color:#a78bfa;margin-bottom:8px;">'
+        f'🧠 Warum entschied das Modell für {winner_name}?</div>'
+        f'<p style="margin-bottom:10px;">'
+        f'Das <b>{model_name}</b> bewertet die Differenz aller Features (Rot minus Blau). '
+        f'Positive Werte (🔴) begünstigen <b>{red_name}</b>, negative (🔵) <b>{blue_name}</b>.</p>'
+        f'{bars_html}'
+        f'<p style="margin-top:12px;">{adv_text}</p>'
+        f'<p>Das Modell tippt auf <b>{winner_name}</b>, weil dieser Kämpfer in den entscheidenden '
+        f'Features (<i>{feat_list}</i>) klare Vorteile zeigt, '
+        f'die historisch am stärksten mit einem Sieg korrelieren.</p>'
+        '</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -395,23 +726,51 @@ def main():
         default_b = fighters.index("Ilia Topuria") if "Ilia Topuria" in fighters else 1
         blue_name = st.selectbox("🔵 Blaue Ecke", fighters, index=default_b, key="blue")
 
+    max_data_date = pd.to_datetime(df['date']).max().date()
+    default_reference_date = min(date.today(), max_data_date)
+    reference_date = st.date_input(
+        "Stichtag für den Vergleich",
+        value=default_reference_date,
+        max_value=max_data_date,
+        help="Es werden nur Kämpfe bis zu diesem Datum berücksichtigt. Die Inaktivität wird für beide Kämpfer relativ zu genau diesem Stichtag berechnet."
+    )
+
     if red_name == blue_name:
         st.warning("⚠️ Bitte zwei unterschiedliche Kämpfer wählen!")
         return
 
-    r_stats = get_stats(df, red_name)
-    b_stats = get_stats(df, blue_name)
+    r_stats = get_stats(df, red_name, reference_date=reference_date)
+    b_stats = get_stats(df, blue_name, reference_date=reference_date)
 
     if not r_stats:
-        st.error(f"Keine Daten für {red_name} gefunden."); return
+        st.error(f"Keine Daten für {red_name} bis zum gewählten Stichtag gefunden."); return
     if not b_stats:
-        st.error(f"Keine Daten für {blue_name} gefunden."); return
+        st.error(f"Keine Daten für {blue_name} bis zum gewählten Stichtag gefunden."); return
 
     # ── Kämpfer-Karten ─────────────────────────────────────────
     st.markdown("### 🥋 Kämpfer-Profil")
-    col1, col2 = st.columns(2)
-    with col1: fighter_card(red_name,  r_stats, "red")
-    with col2: fighter_card(blue_name, b_stats, "blue")
+    left_col, center_col, right_col = st.columns([2.2, 1, 2.2])
+    with left_col:
+        image_col, info_col = st.columns([1, 1.8])
+        with image_col:
+            fighter_headshot(red_name)
+        with info_col:
+            fighter_panel(red_name, r_stats, "red")
+    with center_col:
+        st.markdown("""
+        <div class="vs-core">
+            <div class="vs-badge">VS</div>
+            <div class="vs-caption">Fight Comparison</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with right_col:
+        info_col, image_col = st.columns([1.8, 1])
+        with info_col:
+            fighter_panel(blue_name, b_stats, "blue")
+        with image_col:
+            fighter_headshot(blue_name)
+
+    render_tale_of_tape(r_stats, b_stats)
 
     # ── Vorhersage-Button ──────────────────────────────────────
     st.markdown("---")
